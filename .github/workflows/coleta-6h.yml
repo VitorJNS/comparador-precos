@@ -1,0 +1,20 @@
+# Opcional: o cron grátis da Vercel só roda 1x por dia. Se o projeto estiver no GitHub,
+# este workflow (também grátis) dispara a coleta a cada 6 horas.
+# Configure em GitHub -> Settings -> Secrets and variables -> Actions:
+#   RADAR_URL    = https://seu-projeto.vercel.app
+#   CRON_SECRET  = o mesmo valor cadastrado na Vercel
+name: Coleta de preços (a cada 6h)
+
+on:
+  schedule:
+    - cron: '0 3,9,15,21 * * *' # 00h, 06h, 12h e 18h em Brasília
+  workflow_dispatch:
+
+jobs:
+  coletar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispara a coleta na Vercel
+        run: |
+          curl -fsS -X POST "${{ secrets.RADAR_URL }}/api/cron/coletar" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

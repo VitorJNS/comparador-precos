@@ -1,0 +1,16 @@
+[
+  {
+    "nome": "Macallan 12 anos Sherry Oak",
+    "busca": "macallan 12 sherry oak",
+    "termosObrigatorios": ["macallan", "12", "sherry"],
+    "termosProibidos": ["miniatura", "50 ml", "kit", "copo", "double", "triple", "18", "15", "caixa vazia"],
+    "eans": ["5010314017408"]
+  },
+  {
+    "nome": "Royal Salute 21 anos Blended Malt",
+    "busca": "royal salute 21 malt",
+    "termosObrigatorios": ["royal salute", "21", "malt|malts"],
+    "termosProibidos": ["miniatura", "50 ml", "kit", "copo", "barril", "signature", "grain", "polo"],
+    "eans": []
+  }
+]

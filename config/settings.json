@@ -1,0 +1,49 @@
+{
+  "intervaloHoras": 6,
+  "notificarAumentos": false,
+  "quedaMinimaPercentual": 0.5,
+  "pausaEntreRequisicoesMs": 600,
+  "regioes": [
+    {
+      "id": "campinas",
+      "nome": "Campinas e região",
+      "ceps": [
+        { "cep": "13015000", "cidade": "Campinas (Centro)" },
+        { "cep": "13083000", "cidade": "Campinas (Barão Geraldo)" },
+        { "cep": "13270000", "cidade": "Valinhos" },
+        { "cep": "13280000", "cidade": "Vinhedo" },
+        { "cep": "13170000", "cidade": "Sumaré" },
+        { "cep": "13184000", "cidade": "Hortolândia" },
+        { "cep": "13140000", "cidade": "Paulínia" },
+        { "cep": "13465000", "cidade": "Americana" }
+      ]
+    },
+    {
+      "id": "indaiatuba",
+      "nome": "Indaiatuba",
+      "ceps": [
+        { "cep": "13330000", "cidade": "Indaiatuba (Centro)" },
+        { "cep": "13345000", "cidade": "Indaiatuba (Jd. Morada do Sol)" }
+      ]
+    },
+    {
+      "id": "sp",
+      "nome": "São Paulo",
+      "ceps": [
+        { "cep": "01310100", "cidade": "São Paulo (Paulista)" },
+        { "cep": "04543000", "cidade": "São Paulo (Itaim Bibi)" },
+        { "cep": "03310000", "cidade": "São Paulo (Tatuapé)" },
+        { "cep": "05424000", "cidade": "São Paulo (Pinheiros)" },
+        { "cep": "04101000", "cidade": "São Paulo (Vila Mariana)" }
+      ]
+    },
+    {
+      "id": "guarulhos",
+      "nome": "Guarulhos",
+      "ceps": [
+        { "cep": "07010000", "cidade": "Guarulhos (Centro)" },
+        { "cep": "07190000", "cidade": "Guarulhos (Cumbica)" }
+      ]
+    }
+  ]
+}

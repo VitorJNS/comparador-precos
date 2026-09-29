@@ -1,0 +1,27 @@
+{
+  "name": "comparador-preco-mercado",
+  "version": "1.0.0",
+  "description": "Radar de preços: monitora produtos em sites de mercados, rankeia e avisa promoções por e-mail",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "nodemon --watch src --watch config --watch .env --ext js,json --exec \"node --env-file-if-exists=.env src/server.js\"",
+    "coletar": "node --env-file-if-exists=.env src/cli.js",
+    "testar-email": "node --env-file-if-exists=.env src/cli.js --testar-email",
+    "migrar": "node --env-file-if-exists=.env scripts/migrar-sqlite.js",
+    "deploy": "npx vercel deploy --prod"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@vercel/functions": "^3.9.9",
+    "nodemailer": "^10.0.12"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "nodemon": "^3.1.14"
+  }
+}

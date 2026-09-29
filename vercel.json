@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "",
+  "installCommand": "npm install --omit=dev",
+  "outputDirectory": "public",
+  "regions": ["gru1"],
+  "functions": {
+    "api/index.js": { "maxDuration": 300 }
+  },
+  "rewrites": [{ "source": "/api/:path*", "destination": "/api/index?path=:path*" }],
+  "crons": [{ "path": "/api/cron/coletar", "schedule": "0 9 * * *" }]
+}

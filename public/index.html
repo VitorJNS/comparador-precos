@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Radar de Preços</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Cpath d='M9 21l5-6 4 3 5-7' stroke='white' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script>
+    try { const t = localStorage.getItem('tema'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="#/" class="brand" aria-label="Radar de Preços, início">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 17l5-6 4 3 7-8" /></svg>
+        </span>
+        <span class="brand-name">Radar de Preços</span>
+      </a>
+      <div class="topbar-status" id="status" aria-live="polite"></div>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost icon-btn" id="themeBtn" title="Alternar tema claro/escuro" aria-label="Alternar tema">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" /></svg>
+        </button>
+        <button class="btn btn-secondary" id="addBtn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          <span>Produto</span>
+        </button>
+        <button class="btn btn-primary" id="runBtn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
+          <span>Atualizar agora</span>
+        </button>
+      </div>
+    </div>
+    <div class="progress" id="progress" hidden>
+      <div class="progress-bar"><span id="progressFill"></span></div>
+      <div class="progress-text" id="progressText"></div>
+    </div>
+  </header>
+
+  <nav class="filters" aria-label="Filtro de região">
+    <div class="filters-inner">
+      <span class="filters-label">Região</span>
+      <div class="segmented" id="regions" role="radiogroup"></div>
+    </div>
+  </nav>
+
+  <main id="app" class="container"></main>
+
+  <dialog id="productDialog" class="dialog">
+    <form method="dialog" id="productForm">
+      <header class="dialog-head">
+        <h2 id="dialogTitle">Novo produto</h2>
+        <button type="button" class="btn btn-ghost icon-btn" data-close aria-label="Fechar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </header>
+      <div class="dialog-body">
+        <label class="field">
+          <span class="field-label">Nome</span>
+          <input name="name" required placeholder="Ex.: Café Pilão Tradicional 500g" />
+        </label>
+        <label class="field">
+          <span class="field-label">Termo de busca nos sites</span>
+          <input name="query" placeholder="Ex.: cafe pilao 500g" />
+          <span class="field-hint">O que será digitado na busca de cada mercado. Para várias buscas, separe por <code>;</code> (ex.: <code>geladeira 3 portas; refrigerador french door</code>). Se ficar vazio, usamos o nome.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Termos obrigatórios</span>
+          <input name="include" placeholder="pilao, 500 g, tradicional" />
+          <span class="field-hint">Separe por vírgula. Todos precisam aparecer no nome do item. Use <code>|</code> para alternativas: <code>malt|malts</code>.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Termos proibidos</span>
+          <input name="exclude" placeholder="kit, miniatura, extra forte" />
+          <span class="field-hint">Itens com qualquer um destes termos são descartados.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Códigos de barras (EAN)</span>
+          <input name="eans" inputmode="numeric" placeholder="7896089012345" />
+          <span class="field-hint">Opcional. Quando o site informa o EAN, ele garante que é exatamente o mesmo produto.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Preço máximo (R$)</span>
+          <input name="maxPrice" inputmode="decimal" placeholder="Ex.: 3.500,00" />
+          <span class="field-hint">Opcional. Ofertas acima desse valor ficam fora do ranking.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Onde buscar</span>
+          <select name="channels">
+            <option value="mercados">Só supermercados (onde passa cartão alimentação)</option>
+            <option value="todos">Supermercados + lojas de varejo (Brastemp, Electrolux, Fast Shop)</option>
+          </select>
+        </label>
+        <label class="switch">
+          <input type="checkbox" name="active" checked />
+          <span class="switch-track" aria-hidden="true"></span>
+          <span>Monitorar este produto</span>
+        </label>
+      </div>
+      <footer class="dialog-foot">
+        <span class="form-error" id="formError" role="alert"></span>
+        <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="saveBtn">Salvar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="loginDialog" class="dialog" style="width:min(380px, calc(100vw - 32px))">
+    <form id="loginForm">
+      <header class="dialog-head"><h2>Radar de Preços</h2></header>
+      <div class="dialog-body">
+        <label class="field">
+          <span class="field-label">Senha do painel</span>
+          <input type="password" name="senha" required autocomplete="current-password" />
+        </label>
+      </div>
+      <footer class="dialog-foot">
+        <span class="form-error" id="loginError" role="alert"></span>
+        <button type="submit" class="btn btn-primary">Entrar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
