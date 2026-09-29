@@ -134,6 +134,16 @@ let ready = null;
 function init() {
   ready ??= (async () => {
     client = await connect();
+    // Banco já pronto (caso comum): uma consulta só, em vez de recriar o schema a cada partida a frio.
+    const [state] = await client.query(
+      `SELECT to_regclass('public.run_markets') IS NOT NULL AS ok,
+              (SELECT to_regclass('public.kv') IS NOT NULL) AS has_kv`,
+      [],
+    );
+    if (state.ok && state.has_kv) {
+      const seeded = await client.query(`SELECT 1 FROM kv WHERE key = 'seeded'`, []);
+      if (seeded.length) return;
+    }
     for (const stmt of SCHEMA) await client.query(stmt, []);
     const seeded = await client.query(`SELECT value FROM kv WHERE key = 'seeded'`, []);
     if (!seeded.length) {

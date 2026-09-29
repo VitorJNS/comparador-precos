@@ -463,10 +463,10 @@ function settingsPanel(o) {
     </div>
     <div>
       <h3>Agendamento</h3>
-      <p>${o.runs.hosted ? 'Uma vez por dia, por volta das <strong>06:00</strong> (Vercel).' : `A cada <strong>${o.runs.intervalHours} horas</strong> enquanto o app estiver aberto.`}</p>
+      <p>${o.runs.hosted ? 'A cada <strong>6 horas</strong>: 00h, 06h, 12h e 18h (GitHub Actions).' : `A cada <strong>${o.runs.intervalHours} horas</strong> enquanto o app estiver aberto.`}</p>
       <p class="muted" style="font-size:13px">Última coleta: ${o.runs.last ? fmtDate(o.runs.last.started_at) : '—'}<br>Próxima: ${fmtDate(o.runs.next)}</p>
-      <p class="muted" style="font-size:12px">${o.runs.hosted ? 'Ajuste o horário em <code>vercel.json</code>.' : 'Ajuste em <code>config/settings.json</code>.'}</p>
-      ${o.runs.hosted ? '<button class="btn btn-ghost btn-sm" id="logoutBtn" style="margin-top:6px">Sair do painel</button>' : ''}
+      <p class="muted" style="font-size:12px">${o.runs.hosted ? 'Ajuste em <code>.github/workflows/coleta-6h.yml</code>.' : 'Ajuste em <code>config/settings.json</code>.'}</p>
+      ${o.runs.locked ? '<button class="btn btn-ghost btn-sm" id="logoutBtn" style="margin-top:6px">Sair do painel</button>' : ''}
     </div>
     <div>
       <h3>CEPs pesquisados</h3>

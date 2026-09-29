@@ -2,7 +2,7 @@
 // função da Vercel (api/index.js).
 //
 // Segurança:
-//   - PAINEL_SENHA: se definida, a API exige login (cookie assinado). Obrigatória na Vercel.
+//   - PAINEL_SENHA: opcional. Se definida, a API exige login (cookie assinado).
 //   - CRON_SECRET: protege as rotas /api/cron/* (a Vercel envia "Authorization: Bearer <CRON_SECRET>").
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -108,11 +108,14 @@ async function nextRunAt() {
   const settings = loadSettings();
   const last = lastRunCache ?? (await lastRun());
   if (ON_VERCEL) {
-    // Cron diário do vercel.json (09:00 UTC = 06:00 em Brasília).
-    const d = new Date();
-    d.setUTCHours(9, 0, 0, 0);
-    if (d <= new Date()) d.setUTCDate(d.getUTCDate() + 1);
-    return d;
+    // GitHub Actions às 03, 09, 15 e 21 UTC (00h, 06h, 12h, 18h em Brasília); o cron da Vercel também às 09 UTC.
+    const now = new Date();
+    for (let add = 0; add < 30; add++) {
+      const d = new Date(now);
+      d.setUTCMinutes(0, 0, 0);
+      d.setUTCHours(d.getUTCHours() + add);
+      if (d > now && [3, 9, 15, 21].includes(d.getUTCHours())) return d;
+    }
   }
   if (!last) return new Date();
   return new Date(new Date(last.started_at).getTime() + (settings.intervaloHoras ?? 6) * 3600e3);
@@ -129,8 +132,9 @@ async function runsSummary() {
   return {
     last,
     next: (await nextRunAt()).toISOString(),
-    intervalHours: ON_VERCEL ? 24 : (loadSettings().intervaloHoras ?? 6),
+    intervalHours: ON_VERCEL ? 6 : (loadSettings().intervaloHoras ?? 6),
     hosted: ON_VERCEL,
+    locked: !!process.env.PAINEL_SENHA,
     markets: MARKETS.map((m) => {
       const r = markets.find((x) => x.market === m.id);
       return { id: m.id, name: m.name, kind: m.kind, site: m.site, status: r?.status ?? 'pendente', offers: r?.offers ?? 0, error: r?.error ?? null, ms: r?.ms ?? null };
@@ -255,8 +259,7 @@ export async function handleApi(req, res, url) {
     return send(res, 404, { error: 'Rota não encontrada' });
   }
 
-  // Login do painel.
-  if (ON_VERCEL && !process.env.PAINEL_SENHA) return send(res, 500, { error: 'Defina PAINEL_SENHA nas variáveis da Vercel' });
+  // Login do painel (só quando PAINEL_SENHA estiver definida).
   if (parts[1] === 'login' && method === 'POST') {
     const { senha } = await readBody(req);
     const a = Buffer.from(String(senha ?? ''));
