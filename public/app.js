@@ -387,6 +387,43 @@ function buyButton(g, cls = 'btn-primary btn-sm') {
   return `<a class="btn ${cls} buy" href="${esc(g.url)}" target="_blank" rel="noopener" title="Abrir a oferta no site do ${esc(g.marketName)}">Abrir no ${esc(g.marketName)}${ICON.ext}</a>`;
 }
 
+function delButton(p) {
+  return `<button type="button" class="del-btn" data-del="${p.id}" title="Remover ${esc(p.name)}" aria-label="Remover ${esc(p.name)}">${ICON.trash}</button>`;
+}
+
+// Modal de confirmação (no lugar do confirm() do navegador). Resolve true se confirmar.
+function confirmDialog({ title, message, ok = 'Confirmar' }) {
+  const dlg = $('#confirmDialog');
+  $('#confirmTitle').textContent = title;
+  $('#confirmMsg').textContent = message;
+  $('#confirmOk').textContent = ok;
+  dlg.returnValue = '';
+  dlg.showModal();
+  $('#confirmOk').focus();
+  return new Promise((resolve) => dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true }));
+}
+
+// Clicar fora do modal = cancelar.
+$('#confirmDialog').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) e.currentTarget.close('cancel');
+});
+
+async function removeProduct(p, after) {
+  const ok = await confirmDialog({
+    title: 'Remover produto?',
+    message: `"${p.name}" deixa de ser monitorado e todo o histórico de preços dele é apagado. Não dá para desfazer.`,
+    ok: 'Remover',
+  });
+  if (!ok) return;
+  try {
+    await api(`products/${p.id}`, { method: 'DELETE' });
+    toast('Produto removido');
+    after?.();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 function productCard(p) {
   const b = p.best;
   const sub = [p.marketsWithOffer ? `${p.marketsWithOffer} mercado${p.marketsWithOffer > 1 ? 's' : ''}` : null, p.storeCount ? `${p.storeCount} loja${p.storeCount > 1 ? 's' : ''}` : null].filter(Boolean).join(' · ');
@@ -414,10 +451,11 @@ function productCard(p) {
   return `<div class="card ${p.active ? '' : 'inactive'} fade-in" data-href="#/produto/${p.id}" role="link" tabindex="0" aria-label="Ver ranking de ${esc(p.name)}">
     <div class="card-top">
       ${thumb(b?.image ?? p.image)}
-      <div style="min-width:0">
+      <div style="min-width:0;flex:1">
         <div class="card-title" title="${esc(p.name)}">${esc(p.name)}</div>
         <div class="card-sub">${p.active ? 'Monitorando' : 'Pausado'}${b ? ` · visto ${timeAgo(b.seenAt)}` : ''}</div>
       </div>
+      ${delButton(p)}
     </div>
     ${body}
     <div class="card-foot"><span>${sub || 'sem ofertas'}</span>${buyButton(b) || '<span>Ver ranking →</span>'}</div>
@@ -491,7 +529,7 @@ async function renderHome() {
   const waitingList = waiting.length
     ? `<details class="waiting">
         <summary>${waiting.length} produto${waiting.length > 1 ? 's' : ''} monitorado${waiting.length > 1 ? 's' : ''} sem oferta disponível ${state.region === 'todas' ? 'no momento' : 'nesta região'}</summary>
-        <ul>${waiting.map((p) => `<li><a href="#/produto/${p.id}">${esc(p.name)}</a></li>`).join('')}</ul>
+        <ul>${waiting.map((p) => `<li><a href="#/produto/${p.id}">${esc(p.name)}</a>${delButton(p)}</li>`).join('')}</ul>
       </details>`
     : '';
   app.innerHTML = `
@@ -518,12 +556,20 @@ async function renderHome() {
 
   app.querySelectorAll('.card[data-href]').forEach((card) => {
     const go = (e) => {
-      if (e.target.closest('.buy')) return;
+      if (e.target.closest('.buy, .del-btn')) return;
       location.hash = card.dataset.href;
     };
     card.addEventListener('click', go);
     card.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === card) go(e); });
   });
+
+  app.querySelectorAll('[data-del]').forEach((btn) =>
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const p = o.products.find((x) => x.id === Number(btn.dataset.del));
+      if (p) removeProduct(p, renderHome);
+    }),
+  );
 
   $('#logoutBtn')?.addEventListener('click', async () => {
     await fetch('/api/logout', { method: 'POST' });
@@ -675,12 +721,7 @@ async function renderProduct(id) {
   $('#toggleChart').onclick = () => { state.chartAsTable = !state.chartAsTable; renderProduct(id); };
   $('#toggleCand')?.addEventListener('click', () => { state.allCandidates = !state.allCandidates; renderProduct(id); });
   $('#editBtn').onclick = () => openProductDialog(p);
-  $('#delBtn').onclick = async () => {
-    if (!confirm(`Excluir "${p.name}" e todo o histórico de preços dele?`)) return;
-    await api(`products/${id}`, { method: 'DELETE' });
-    toast('Produto excluído');
-    location.hash = '#/';
-  };
+  $('#delBtn').onclick = () => removeProduct(p, () => { location.hash = '#/'; });
 
   app.querySelectorAll('[data-accept]').forEach((b) =>
     b.addEventListener('click', async () => {
@@ -691,7 +732,12 @@ async function renderProduct(id) {
   );
   app.querySelectorAll('[data-reject]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm(`Descartar "${b.dataset.title}" deste produto? Ele não será mais comparado.`)) return;
+      const ok = await confirmDialog({
+        title: 'Descartar este item?',
+        message: `"${b.dataset.title}" sai do ranking e não será mais comparado neste produto.`,
+        ok: 'Descartar',
+      });
+      if (!ok) return;
       await api(`products/${id}/descartar`, { method: 'POST', body: { keys: b.dataset.reject.split(',') } });
       toast('Item descartado');
       renderProduct(id);
@@ -704,6 +750,7 @@ async function renderProduct(id) {
 const dialog = $('#productDialog');
 const form = $('#productForm');
 let editing = null;
+const saveLabel = $('#saveBtn').textContent;
 
 function openProductDialog(p = null) {
   editing = p;
@@ -739,6 +786,7 @@ form.addEventListener('submit', async (e) => {
   if (!form.include.value.trim()) body.include = body.query.split(/\s+/).filter((w) => w.length > 1).join(',');
   try {
     $('#saveBtn').disabled = true;
+    if (!editing) $('#saveBtn').textContent = 'Salvando e buscando imagem…';
     if (editing) await api(`products/${editing.id}`, { method: 'PUT', body });
     else {
       const r = await api('products', { method: 'POST', body });
@@ -751,6 +799,7 @@ form.addEventListener('submit', async (e) => {
     $('#formError').textContent = err.message;
   } finally {
     $('#saveBtn').disabled = false;
+    $('#saveBtn').textContent = saveLabel;
   }
 });
 

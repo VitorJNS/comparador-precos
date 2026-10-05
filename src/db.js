@@ -126,7 +126,11 @@ const SCHEMA = [
   )`,
   `CREATE INDEX IF NOT EXISTS events_created ON events(created_at)`,
   `CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)`,
+  // v2: imagem do produto, buscada nas lojas quando ele é cadastrado.
+  `ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT`,
 ];
+// Aumente quando mudar o SCHEMA: os bancos existentes rodam os comandos de novo uma vez.
+const SCHEMA_VERSION = '2';
 
 let ready = null;
 
@@ -134,17 +138,17 @@ let ready = null;
 function init() {
   ready ??= (async () => {
     client = await connect();
-    // Banco já pronto (caso comum): uma consulta só, em vez de recriar o schema a cada partida a frio.
-    const [state] = await client.query(
-      `SELECT to_regclass('public.run_markets') IS NOT NULL AS ok,
-              (SELECT to_regclass('public.kv') IS NOT NULL) AS has_kv`,
-      [],
-    );
-    if (state.ok && state.has_kv) {
-      const seeded = await client.query(`SELECT 1 FROM kv WHERE key = 'seeded'`, []);
-      if (seeded.length) return;
+    // Banco já pronto (caso comum): duas consultas, em vez de recriar o schema a cada partida a frio.
+    const [state] = await client.query(`SELECT to_regclass('public.kv') IS NOT NULL AS has_kv`, []);
+    if (state.has_kv) {
+      const [v] = await client.query(`SELECT value FROM kv WHERE key = 'schema'`, []);
+      if (v?.value === SCHEMA_VERSION) return;
     }
     for (const stmt of SCHEMA) await client.query(stmt, []);
+    await client.query(
+      `INSERT INTO kv (key, value) VALUES ('schema', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [SCHEMA_VERSION],
+    );
     const seeded = await client.query(`SELECT value FROM kv WHERE key = 'seeded'`, []);
     if (!seeded.length) {
       for (const s of seedJson) {
@@ -199,8 +203,13 @@ export function rowToProduct(r) {
     active: !!r.active,
     maxPrice: r.max_price ?? null,
     channels: r.channels ?? 'mercados',
+    image: r.image ?? null,
     createdAt: r.created_at,
   };
+}
+
+export async function setProductImage(id, image) {
+  await q('UPDATE products SET image = $1 WHERE id = $2', [image, id]);
 }
 
 export async function listProducts({ onlyActive = false } = {}) {

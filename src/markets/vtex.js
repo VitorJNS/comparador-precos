@@ -7,7 +7,7 @@
 // Sites sem regionalização (regional: false) usam o preço que vem na própria busca.
 
 import { getJson, postJson } from '../http.js';
-import { evaluate, searchAll } from '../matcher.js';
+import { evaluate, searchAll, searchTerms } from '../matcher.js';
 
 const REGION_TTL_MS = 12 * 60 * 60 * 1000;
 const SIM_CHUNK = 40;
@@ -63,7 +63,24 @@ export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase,
     return results;
   }
 
-  return async function collect(product, ctx) {
+  // Primeira imagem de um item que confere com o produto (usada ao cadastrar; só a busca, sem preço).
+  async function findImage(product) {
+    for (const term of searchTerms(product)) {
+      for (const p of await search(term)) {
+        for (const item of p.items ?? []) {
+          const title = item.nameComplete || p.productName;
+          const image = item.images?.[0]?.imageUrl;
+          if (image && evaluate(product, { title, ean: item.ean || null, key: `${key}:${item.itemId}` }).match) return image;
+        }
+      }
+    }
+    return null;
+  }
+
+  collect.findImage = findImage;
+  return collect;
+
+  async function collect(product, ctx) {
     const all = await searchAll(product, search);
     const found = [...new Map(all.map((p) => [p.productId, p])).values()];
     const matched = new Map(); // skuId -> { title, url, image, ean, extKey, searchSellers }
@@ -150,5 +167,5 @@ export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase,
       });
     }
     return { offers, candidates };
-  };
+  }
 }

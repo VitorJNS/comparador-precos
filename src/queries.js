@@ -167,11 +167,15 @@ export async function purgeNonMatching(product) {
 // Foto do produto: prefere a de uma oferta disponível, mas usa a de uma oferta
 // sem estoque quando não há outra (o card não fica sem imagem).
 export async function productImages() {
+  // Imagem da melhor oferta; sem ofertas, a imagem buscada quando o produto foi cadastrado.
   const rows = await q(
-    `SELECT DISTINCT ON (product_id) product_id, image FROM offers
-     WHERE image IS NOT NULL AND image <> '' ORDER BY product_id, available DESC, price ASC`,
+    `SELECT p.id AS product_id, COALESCE(
+       (SELECT o.image FROM offers o WHERE o.product_id = p.id AND o.image IS NOT NULL AND o.image <> ''
+        ORDER BY o.available DESC, o.price ASC LIMIT 1),
+       p.image) AS image
+     FROM products p`,
   );
-  return new Map(rows.map((r) => [r.product_id, r.image]));
+  return new Map(rows.filter((r) => r.image).map((r) => [r.product_id, r.image]));
 }
 
 export async function productImage(productId) {

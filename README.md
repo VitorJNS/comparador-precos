@@ -14,16 +14,16 @@ Roda de dois jeitos: **na Vercel** (online 24h, banco Neon) ou **no seu PC**.
    `npm run migrar`
 3. **Vercel:** `npx vercel login` (uma vez) e depois `npx vercel link` nesta pasta.
 4. **Variáveis** (Vercel → Project → Settings → Environment Variables):
-   `DATABASE_URL`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_PARA`, `PAINEL_SENHA` e `CRON_SECRET`.
+   `DATABASE_URL`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_PARA` e `CRON_SECRET` (`PAINEL_SENHA` é opcional).
 5. **Deploy:** `npx vercel deploy --prod` (ou `npm run deploy`).
 
 Como funciona lá:
 - Funções na região **São Paulo** (`gru1`), com limite de 5 minutos por execução. A coleta é dividida:
   cada loja roda numa execução própria e, perto do limite, continua numa nova execução de onde parou.
   A última loja a terminar envia o e-mail.
-- **Cron grátis: 1 vez por dia**, por volta das 06:00 (`vercel.json`). Para rodar a cada 6h de graça, suba
-  o projeto no GitHub e use o workflow `.github/workflows/coleta-6h.yml` (instruções no arquivo).
-- O painel pede a senha `PAINEL_SENHA`; as rotas de coleta exigem `CRON_SECRET`.
+- **Agendamento:** o GitHub Actions (`.github/workflows/coleta-6h.yml`) dispara a coleta às 00h, 06h, 12h e 18h
+  (pode atrasar alguns minutos). O cron da Vercel (`vercel.json`, 1x por dia no plano grátis) fica de reserva.
+- Se `PAINEL_SENHA` estiver definida, o painel pede essa senha. As rotas de coleta sempre exigem `CRON_SECRET`.
 
 ## No seu PC
 
@@ -37,7 +37,8 @@ Ou dê dois cliques em `iniciar.bat`.
 - Com `DATABASE_URL` no `.env`, usa o mesmo banco Neon da Vercel. Sem ela, usa um Postgres embutido
   (PGlite) em `data/pglite`.
 - **Atualizar agora** roda uma coleta na hora (alguns minutos).
-- Com o app aberto, a coleta roda sozinha a cada `intervaloHoras` (padrão: 6h).
+- Sem `DATABASE_URL`, com o app aberto, a coleta roda sozinha a cada `intervaloHoras` (padrão: 6h). Com o
+  banco Neon de produção, o PC não coleta sozinho (quem agenda é o GitHub Actions); "Atualizar agora" funciona.
 - Para iniciar junto com o Windows: `powershell -ExecutionPolicy Bypass -File .\iniciar-com-windows.ps1`
 
 Outros comandos: `npm run coletar` (coleta sem abrir o painel), `npm run testar-email`.
@@ -79,11 +80,17 @@ Use **É este** para incluir um item, ou o **×** no ranking para excluir um que
 | Tenda Atacado | Página de busca do tendaatacado.com.br | Preço único do site |
 | Assaí, Sumerbol | Não suportados: não vendem online, só publicam encartes em imagem | — |
 | **Varejo:** Brastemp, Electrolux, Fast Shop | API VTEX, só o que a própria loja vende | Preço nacional do site |
-| Magalu | Não suportado: bloqueia acesso automatizado (Akamai) | — |
+| **Varejo:** KaBuM! | API de busca do KaBuM, só o que o próprio KaBuM vende | Preço nacional do site |
+| **Varejo:** Magalu | Ofertas vendidas e entregues pela Magalu dentro do KaBuM (mesmo grupo). O site magazineluiza.com.br bloqueia acesso automatizado | Preço nacional do site |
+| Amazon | Não suportado: bloqueia acesso automatizado (verificação anti-robô) | — |
 
 Por padrão, cada produto só é comparado em supermercados. Marketplaces (carrefour.com.br, lojas parceiras
 do Pão de Açúcar e do Tenda) ficam de fora de propósito. No formulário do produto, "Onde buscar" →
-"Supermercados + lojas de varejo" inclui também Brastemp, Electrolux e Fast Shop (usado nas geladeiras).
+"Supermercados + lojas de varejo" inclui também Brastemp, Electrolux, Fast Shop, KaBuM e Magalu
+(usado nas geladeiras, TV e eletroportáteis).
+
+Ao cadastrar um produto, o app já procura uma imagem dele nas lojas (a primeira que conferir com os termos).
+Para remover um produto, use o ícone de lixeira no card (aparece ao passar o mouse) ou **Excluir** na página dele.
 
 Os CEPs de cada região ficam em `config/settings.json`. Adicionar CEPs revela mais lojas.
 Só ofertas disponíveis aparecem no painel e nos e-mails. As sem estoque seguem monitoradas (para o

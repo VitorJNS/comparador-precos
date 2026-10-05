@@ -6,9 +6,9 @@
 //   - CRON_SECRET: protege as rotas /api/cron/* (a Vercel envia "Authorization: Bearer <CRON_SECRET>").
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { q, one, getProduct, listProducts, loadSettings, saveProduct } from './db.js';
+import { q, one, getProduct, listProducts, loadSettings, saveProduct, setProductImage } from './db.js';
 import { getProgress, runCollection, runMarketSlice, startRun } from './collector.js';
-import { MARKETS, UNSUPPORTED } from './markets/index.js';
+import { MARKETS, UNSUPPORTED, findProductImage } from './markets/index.js';
 import { emailConfigured, previewSummaryHtml, sendSummaryEmail } from './notifier.js';
 import {
   getOffers, getOffersByProduct, historicMin, historicMins, history, productImage, productImages,
@@ -64,6 +64,9 @@ function cronAuthorized(req) {
 // ---------- coleta na Vercel: uma execução por loja, encadeada ----------
 
 function baseUrl(req) {
+  // Sempre o domínio de produção: o cron da Vercel chama a URL da própria publicação
+  // (xxx-hash.vercel.app), que fica atrás da proteção de login da Vercel e recusa os encadeamentos.
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   const proto = req.headers['x-forwarded-proto'] ?? (req.socket?.encrypted ? 'https' : 'http');
   return `${proto}://${req.headers['x-forwarded-host'] ?? req.headers.host}`;
 }
@@ -92,7 +95,14 @@ async function startCollection(req, trigger) {
   const r = await startRun(trigger);
   if (r.started) {
     const base = baseUrl(req);
-    await Promise.all(MARKETS.map((m) => dispatchMarket(base, r.runId, m.id)));
+    const results = await Promise.allSettled(MARKETS.map((m) => dispatchMarket(base, r.runId, m.id)));
+    const failed = results.filter((x) => x.status === 'rejected').map((x) => x.reason.message);
+    if (failed.length === MARKETS.length) {
+      // Nenhuma loja começou: encerra a coleta para não travar as próximas.
+      await q(`UPDATE runs SET status = 'erro', finished_at = $1 WHERE id = $2`, [new Date().toISOString(), r.runId]);
+      throw new Error(failed[0]);
+    }
+    if (failed.length) console.error('Coleta', r.runId, failed.join(' | '));
   }
   return r;
 }
@@ -235,6 +245,13 @@ function validateProduct(body, existing = {}) {
   };
 }
 
+// Procura uma imagem do produto nas lojas e guarda (até ~12 s; sem imagem não é erro).
+async function fillImage(product) {
+  const image = await findProductImage(product).catch(() => null);
+  if (image) await setProductImage(product.id, image);
+  return image;
+}
+
 // ---------- rotas ----------
 
 export async function handleApi(req, res, url) {
@@ -296,14 +313,17 @@ export async function handleApi(req, res, url) {
     }
     if (method === 'POST' && !id) {
       const newId = await saveProduct(validateProduct(await readBody(req)));
-      return send(res, 201, { id: newId });
+      const image = await fillImage(await getProduct(newId));
+      return send(res, 201, { id: newId, image });
     }
     const existing = id && (await getProduct(id));
     if (!existing) return send(res, 404, { error: 'Produto não encontrado' });
 
     if (method === 'PUT' && !parts[3]) {
       await saveProduct(validateProduct(await readBody(req), existing));
-      const removed = await purgeNonMatching(await getProduct(id));
+      const updated = await getProduct(id);
+      const removed = await purgeNonMatching(updated);
+      if (!(await productImage(id))) await fillImage(updated);
       return send(res, 200, { ok: true, removed });
     }
     if (method === 'DELETE' && !parts[3]) {

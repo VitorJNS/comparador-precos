@@ -5,6 +5,7 @@ import { createVtexSource } from './vtex.js';
 import { collectPaoDeAcucar } from './paodeacucar.js';
 import { collectPagueMenos } from './paguemenos.js';
 import { collectTenda } from './tenda.js';
+import { createKabumSource } from './kabum.js';
 
 const atacadao = createVtexSource({
   key: 'atacadao',
@@ -50,13 +51,25 @@ export const MARKETS = [
   { id: 'brastemp', name: 'Brastemp', kind: 'varejo', site: 'brastemp.com.br', collect: retail('brastemp', 'https://www.brastemp.com.br', 'Brastemp') },
   { id: 'electrolux', name: 'Electrolux', kind: 'varejo', site: 'loja.electrolux.com.br', collect: retail('electrolux', 'https://loja.electrolux.com.br', 'Electrolux') },
   { id: 'fastshop', name: 'Fast Shop', kind: 'varejo', site: 'site.fastshop.com.br', collect: retail('fastshop', 'https://site.fastshop.com.br', 'Fast Shop') },
+  { id: 'kabum', name: 'KaBuM!', kind: 'varejo', site: 'kabum.com.br', collect: createKabumSource('kabum') },
+  { id: 'magalu', name: 'Magalu', kind: 'varejo', site: 'kabum.com.br (vendido pela Magalu)', collect: createKabumSource('magalu') },
 ];
 
 // Lojas pedidas que não dá para consultar.
 export const UNSUPPORTED = [
   { id: 'assai', name: 'Assaí', reason: 'Não vende online; só publica encartes em imagem por loja.' },
   { id: 'sumerbol', name: 'Sumerbol', reason: 'Não tem loja online; só publica encartes em imagem.' },
-  { id: 'magalu', name: 'Magalu', reason: 'Bloqueia qualquer acesso automatizado ao site (proteção Akamai).' },
+  { id: 'amazon', name: 'Amazon', reason: 'Bloqueia acesso automatizado (página de verificação anti-robô).' },
 ];
 
 export const marketsFor = (product) => MARKETS.filter((m) => m.kind === 'mercado' || product.channels === 'todos');
+
+// Ao cadastrar um produto: procura uma imagem nas lojas de busca rápida, em paralelo,
+// e fica com a primeira que conferir com o produto (ou null se nenhuma achar a tempo).
+export async function findProductImage(product, { timeoutMs = 12000 } = {}) {
+  const tries = MARKETS.filter((m) => m.collect.findImage).map((m) =>
+    m.collect.findImage(product).then((img) => img ?? Promise.reject(new Error('sem imagem'))),
+  );
+  const timeout = new Promise((r) => setTimeout(() => r(null), timeoutMs).unref?.());
+  return Promise.race([Promise.any(tries).catch(() => null), timeout]);
+}

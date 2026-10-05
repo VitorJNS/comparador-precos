@@ -1,5 +1,5 @@
 // Servidor local: painel + API + agendador. Rode com: npm run dev  ->  http://localhost:3000
-// (Na Vercel quem responde é api/index.js, e o agendamento é o cron do vercel.json.)
+// (Na Vercel quem responde é api/index.js; o agendamento é o GitHub Actions e o cron do vercel.json.)
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -30,9 +30,13 @@ async function staticFile(res, pathname) {
   }
 }
 
-const tick = () => localScheduleTick().catch((e) => console.error('Agendador:', e.message));
-setTimeout(tick, 5000);
-setInterval(tick, 60 * 1000);
+// Com DATABASE_URL (o banco Neon de produção), quem agenda é a Vercel/GitHub: o PC não coleta sozinho.
+// O botão "Atualizar agora" continua funcionando.
+if (!process.env.DATABASE_URL) {
+  const tick = () => localScheduleTick().catch((e) => console.error('Agendador:', e.message));
+  setTimeout(tick, 5000);
+  setInterval(tick, 60 * 1000);
+}
 
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
