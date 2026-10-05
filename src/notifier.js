@@ -101,10 +101,21 @@ function buildHtml(sections, title) {
   </div></body></html>`;
 }
 
+/** Destinatários: EMAIL_PARA aceita vários e-mails separados por vírgula, ponto e vírgula ou espaço. */
+export function recipients() {
+  const list = String(process.env.EMAIL_PARA || process.env.SMTP_USER || '')
+    .split(/[,;\s]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.includes('@'));
+  return [...new Set(list)];
+}
+
 async function send(subject, html) {
+  const to = recipients();
   await transport().sendMail({
     from: `"Radar de Preços" <${process.env.SMTP_USER}>`,
-    to: process.env.EMAIL_PARA || process.env.SMTP_USER,
+    // Com mais de um destinatário, vão em cópia oculta: ninguém vê o e-mail dos outros.
+    ...(to.length > 1 ? { to: process.env.SMTP_USER, bcc: to } : { to }),
     subject,
     html,
   });

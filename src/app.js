@@ -9,7 +9,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { q, one, getProduct, listProducts, loadSettings, saveProduct, setProductImage } from './db.js';
 import { getProgress, runCollection, runMarketSlice, startRun } from './collector.js';
 import { MARKETS, UNSUPPORTED, findProductImage } from './markets/index.js';
-import { emailConfigured, previewSummaryHtml, sendSummaryEmail } from './notifier.js';
+import { emailConfigured, previewSummaryHtml, recipients, sendSummaryEmail } from './notifier.js';
 import {
   getOffers, getOffersByProduct, historicMin, historicMins, history, productImage, productImages,
   purgeNonMatching, rankOffers, recentEvents, sparkSeries,
@@ -187,7 +187,7 @@ async function overview(region) {
     progress,
     events,
     stats: { drops7d: drops.n, promos: cards.reduce((n, p) => n + p.promoCount, 0) },
-    email: { configured: emailConfigured(), to: process.env.EMAIL_PARA || process.env.SMTP_USER || null },
+    email: { configured: emailConfigured(), to: recipients().join(', ') || null },
   };
 }
 
