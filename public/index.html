@@ -63,6 +63,17 @@
           <input name="name" required placeholder="Ex.: Café Pilão Tradicional 500g" />
         </label>
         <label class="field">
+          <span class="field-label">Categoria</span>
+          <select name="category">
+            <option value="auto">Automática (pelo nome)</option>
+            <option value="bebidas">Bebidas</option>
+            <option value="eletro">Eletrodomésticos</option>
+            <option value="eletronicos">Eletrônicos</option>
+            <option value="casa">Casa e cozinha</option>
+            <option value="outros">Outros</option>
+          </select>
+        </label>
+        <label class="field">
           <span class="field-label">Termo de busca nos sites</span>
           <input name="query" placeholder="Ex.: cafe pilao 500g" />
           <span class="field-hint">O que será digitado na busca de cada mercado. Para várias buscas, separe por <code>;</code> (ex.: <code>geladeira 3 portas; refrigerador french door</code>). Se ficar vazio, usamos o nome.</span>

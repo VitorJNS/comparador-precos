@@ -64,6 +64,7 @@ Clique em **+ Produto** no painel:
 | Termos obrigatórios | Todos precisam aparecer no nome do item. `malt\|malts` aceita qualquer um. |
 | Termos proibidos | Descarta itens com esses termos (ex.: `kit`, `miniatura`, `50 ml`). |
 | EAN | Código de barras. Quando o site informa o EAN, a correspondência é exata. |
+| Categoria | Aba em que o produto aparece (Bebidas, Eletrodomésticos, Eletrônicos, Casa e cozinha, Outros). "Automática" escolhe pelo nome; as regras ficam em `src/categories.js`. |
 
 Na página do produto, **Itens descartados** lista o que a busca encontrou mas o filtro rejeitou.
 Use **É este** para incluir um item, ou o **×** no ranking para excluir um que não é o produto certo.

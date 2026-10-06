@@ -9,6 +9,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { q, one, getProduct, listProducts, loadSettings, saveProduct, setProductImage } from './db.js';
 import { getProgress, runCollection, runMarketSlice, startRun } from './collector.js';
 import { MARKETS, UNSUPPORTED, findProductImage } from './markets/index.js';
+import { CATEGORIES, guessCategory, isCategory } from './categories.js';
 import { emailConfigured, previewSummaryHtml, recipients, sendSummaryEmail } from './notifier.js';
 import {
   getOffers, getOffersByProduct, historicMin, historicMins, history, productImage, productImages,
@@ -185,6 +186,7 @@ async function overview(region) {
   return {
     products: cards,
     regions: loadSettings().regioes.map((r) => ({ id: r.id, name: r.nome, ceps: r.ceps })),
+    categories: CATEGORIES.map((c) => ({ id: c.id, name: c.name })),
     runs,
     progress,
     events,
@@ -244,6 +246,8 @@ function validateProduct(body, existing = {}) {
     active: body.active !== undefined ? !!body.active : (existing.active ?? true),
     maxPrice: body.maxPrice !== undefined ? parseBRL(body.maxPrice) : (existing.maxPrice ?? null),
     channels: body.channels !== undefined ? (body.channels === 'todos' ? 'todos' : 'mercados') : (existing.channels ?? 'mercados'),
+    // "auto" (ou vazio) = sugerida pelo nome; ver categories.js.
+    category: body.category !== undefined ? (isCategory(body.category) ? body.category : guessCategory(name)) : (existing.category ?? guessCategory(name)),
   };
 }
 

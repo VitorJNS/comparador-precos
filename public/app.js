@@ -6,6 +6,7 @@ const tooltip = $('#tooltip');
 
 const state = {
   region: readPref('regiao', 'todas'),
+  cat: readPref('categoria', 'todos'),
   overview: null,
   allCandidates: false,
   chartAsTable: false,
@@ -513,6 +514,26 @@ function settingsPanel(o) {
   </div>`;
 }
 
+// ---------- categorias (abas da lista de produtos) ----------
+
+const svgIcon = (d) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + d + '</svg>';
+const CAT_ICON = {
+  bebidas: svgIcon('<path d="M10 2h4v4l1.5 3v12a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V9L10 6z"/><path d="M8.5 13h7"/>'),
+  eletro: svgIcon('<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M5 9h14M8 5v2M8 12v4"/>'),
+  eletronicos: svgIcon('<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>'),
+  casa: svgIcon('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/>'),
+  outros: svgIcon('<circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/>'),
+};
+
+// Só aparecem as categorias que têm produto com oferta; a aba escolhida fica salva no navegador.
+function catTabs(categories, products) {
+  const counts = new Map(categories.map((c) => [c.id, products.filter((p) => p.category === c.id).length]));
+  const tab = (id, name, n) => '<button type="button" class="cat-tab" role="tab" aria-selected="' + (state.cat === id) + '" data-cat="' + id + '">' +
+    (CAT_ICON[id] ?? '') + '<span>' + esc(name) + '</span><span class="n">' + n + '</span></button>';
+  return '<div class="cat-tabs" role="tablist" aria-label="Categorias">' + tab('todos', 'Todos', products.length) +
+    categories.filter((c) => counts.get(c.id)).map((c) => tab(c.id, c.name, counts.get(c.id))).join('') + '</div>';
+}
+
 async function renderHome() {
   const o = await api('overview');
   state.overview = o;
@@ -524,8 +545,12 @@ async function renderHome() {
   // A lista mostra só produtos com oferta disponível. Os demais seguem monitorados
   // e voltam para a lista sozinhos quando aparecer oferta.
   const sorted = [...o.products].sort((a, b) => b.active - a.active || a.id - b.id);
-  const products = sorted.filter((p) => p.best);
-  const waiting = sorted.filter((p) => !p.best);
+  const available = sorted.filter((p) => p.best);
+  // Aba salva que ficou sem produtos (ex.: trocou a região) volta para "Todos".
+  if (state.cat !== 'todos' && !available.some((p) => p.category === state.cat)) state.cat = 'todos';
+  const inCat = (p) => state.cat === 'todos' || p.category === state.cat;
+  const products = available.filter(inCat);
+  const waiting = sorted.filter((p) => !p.best && inCat(p));
   const waitingList = waiting.length
     ? `<details class="waiting">
         <summary>${waiting.length} produto${waiting.length > 1 ? 's' : ''} monitorado${waiting.length > 1 ? 's' : ''} sem oferta disponível ${state.region === 'todas' ? 'no momento' : 'nesta região'}</summary>
@@ -536,6 +561,7 @@ async function renderHome() {
     <div class="fade-in">${kpis(o)}</div>
     <section class="section">
       <div class="section-head"><h2>Seus produtos</h2><span class="sub">Melhor preço ${state.region === 'todas' ? 'em todas as regiões' : `em ${esc(o.regions.find((r) => r.id === state.region)?.name)}`}</span></div>
+      ${available.length ? catTabs(o.categories, available) : ''}
       <div class="cards">${products.map(productCard).join('') || `<div class="panel empty">${o.products.length ? 'Nenhum produto com oferta disponível agora.' : 'Nenhum produto. Clique em "Produto" para adicionar.'}</div>`}</div>
       ${waitingList}
     </section>
@@ -568,6 +594,14 @@ async function renderHome() {
       e.stopPropagation();
       const p = o.products.find((x) => x.id === Number(btn.dataset.del));
       if (p) removeProduct(p, renderHome);
+    }),
+  );
+
+  app.querySelectorAll('[data-cat]').forEach((b) =>
+    b.addEventListener('click', () => {
+      state.cat = b.dataset.cat;
+      writePref('categoria', state.cat);
+      renderHome();
     }),
   );
 
@@ -769,6 +803,7 @@ function openProductDialog(p = null) {
   form.exclude.value = (p?.exclude ?? ['kit', 'miniatura']).join(', ');
   form.eans.value = (p?.eans ?? []).join(', ');
   form.channels.value = p?.channels ?? 'mercados';
+  form.category.value = p?.category ?? 'auto';
   form.maxPrice.value = p?.maxPrice ? p.maxPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '';
   form.active.checked = p?.active ?? true;
   dialog.showModal();
@@ -788,6 +823,7 @@ form.addEventListener('submit', async (e) => {
     eans: form.eans.value,
     maxPrice: form.maxPrice.value,
     channels: form.channels.value,
+    category: form.category.value,
     active: form.active.checked,
   };
   if (!form.include.value.trim()) body.include = body.query.split(/\s+/).filter((w) => w.length > 1).join(',');

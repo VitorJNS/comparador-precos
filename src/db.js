@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import settingsJson from '../config/settings.json' with { type: 'json' };
 import seedJson from '../config/produtos-iniciais.json' with { type: 'json' };
+import { guessCategory, isCategory } from './categories.js';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -128,9 +129,11 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)`,
   // v2: imagem do produto, buscada nas lojas quando ele é cadastrado.
   `ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT`,
+  // v3: categoria (abas do painel). Vazia = sugerida pelo nome.
+  `ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT`,
 ];
 // Aumente quando mudar o SCHEMA: os bancos existentes rodam os comandos de novo uma vez.
-const SCHEMA_VERSION = '2';
+const SCHEMA_VERSION = '3';
 
 let ready = null;
 
@@ -204,6 +207,7 @@ export function rowToProduct(r) {
     maxPrice: r.max_price ?? null,
     channels: r.channels ?? 'mercados',
     image: r.image ?? null,
+    category: isCategory(r.category) ? r.category : guessCategory(r.name),
     createdAt: r.created_at,
   };
 }
@@ -234,20 +238,21 @@ export async function saveProduct(p) {
     p.active === false ? 0 : 1,
     p.maxPrice ?? null,
     p.channels === 'todos' ? 'todos' : 'mercados',
+    isCategory(p.category) ? p.category : guessCategory(p.name),
   ];
   // Chamado também dentro do init (produtos iniciais), por isso usa o client direto.
   const run = (text, params) => (client ? client.query(text, params) : q(text, params));
   if (p.id) {
     await run(
       `UPDATE products SET name=$1, query=$2, include_terms=$3, exclude_terms=$4, eans=$5, accepted=$6, rejected=$7,
-       active=$8, max_price=$9, channels=$10 WHERE id=$11`,
+       active=$8, max_price=$9, channels=$10, category=$11 WHERE id=$12`,
       [...vals, p.id],
     );
     return p.id;
   }
   const rows = await run(
-    `INSERT INTO products (name, query, include_terms, exclude_terms, eans, accepted, rejected, active, max_price, channels)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+    `INSERT INTO products (name, query, include_terms, exclude_terms, eans, accepted, rejected, active, max_price, channels, category)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
     vals,
   );
   return rows[0].id;
