@@ -78,6 +78,7 @@ Use **É este** para incluir um item, ou o **×** no ranking para excluir um que
 | Pão de Açúcar | API GPA, busca em cada loja que entrega nos CEPs | Sim |
 | Pague Menos | Página de busca do superpaguemenos.com.br | Preço único do site |
 | Tenda Atacado | Página de busca do tendaatacado.com.br | Preço único do site |
+| Covabra | API VTEX + simulação de carrinho por CEP (região de Campinas e Indaiatuba) | Sim |
 | Assaí, Sumerbol | Não suportados: não vendem online, só publicam encartes em imagem | — |
 | **Varejo:** Brastemp, Electrolux, Fast Shop | API VTEX, só o que a própria loja vende | Preço nacional do site |
 | **Varejo:** KaBuM! | API de busca do KaBuM, só o que o próprio KaBuM vende | Preço nacional do site |

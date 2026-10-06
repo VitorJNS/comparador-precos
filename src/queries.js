@@ -191,12 +191,22 @@ export async function historicMin(productId) {
   return (await one('SELECT MIN(price) AS min FROM observations WHERE product_id = $1 AND available = 1', [productId]))?.min ?? null;
 }
 
+// Um alerta por mudança: variações do mesmo item na mesma loja (127V/220V, SKUs do mesmo
+// modelo) geram eventos iguais na mesma coleta.
+export function dedupeEvents(rows) {
+  const seen = new Set();
+  return rows.filter((e) => {
+    const k = [e.run_id, e.product_id, e.market, e.store_name, e.type, e.old_price, e.new_price].join('|');
+    return !seen.has(k) && seen.add(k);
+  });
+}
+
 export async function recentEvents(limit = 50, productId = null) {
   const rows = productId
     ? await q(
         'SELECT e.*, p.name AS product_name FROM events e JOIN products p ON p.id = e.product_id WHERE e.product_id = $1 ORDER BY e.id DESC LIMIT $2',
-        [productId, limit],
+        [productId, limit * 3],
       )
-    : await q('SELECT e.*, p.name AS product_name FROM events e JOIN products p ON p.id = e.product_id ORDER BY e.id DESC LIMIT $1', [limit]);
-  return rows.map((e) => ({ ...e, marketName: nameOfMarket(e.market) }));
+    : await q('SELECT e.*, p.name AS product_name FROM events e JOIN products p ON p.id = e.product_id ORDER BY e.id DESC LIMIT $1', [limit * 3]);
+  return dedupeEvents(rows).slice(0, limit).map((e) => ({ ...e, marketName: nameOfMarket(e.market) }));
 }

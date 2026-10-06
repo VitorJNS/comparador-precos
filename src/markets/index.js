@@ -32,6 +32,15 @@ const carrefourMercado = createVtexSource({
   storeLabel: (id) => `Carrefour Mercado · loja ${id.replace(/^carrefourbr/, '')}`,
 });
 
+// Covabra (rede de Campinas e região): VTEX com uma loja (seller "covabraNN") por área de entrega.
+const covabra = createVtexSource({
+  key: 'covabra',
+  catalogBase: 'https://www.covabra.com.br',
+  storefront: 'https://www.covabra.com.br',
+  regional: true,
+  storeLabel: (id) => `Covabra · loja ${String(id).replace(/^covabra/i, '')}`,
+});
+
 // Só o canal de supermercado (mercado.carrefour.com.br). O marketplace carrefour.com.br
 // fica de fora de propósito: lá vendem lojas parceiras, não o mercado.
 
@@ -48,6 +57,7 @@ export const MARKETS = [
   { id: 'paodeacucar', name: 'Pão de Açúcar', kind: 'mercado', site: 'paodeacucar.com', collect: collectPaoDeAcucar },
   { id: 'sams', name: "Sam's Club", kind: 'mercado', site: 'samsclub.com.br', collect: sams },
   { id: 'tenda', name: 'Tenda Atacado', kind: 'mercado', site: 'tendaatacado.com.br', collect: collectTenda },
+  { id: 'covabra', name: 'Covabra', kind: 'mercado', site: 'covabra.com.br', collect: covabra },
   { id: 'brastemp', name: 'Brastemp', kind: 'varejo', site: 'brastemp.com.br', collect: retail('brastemp', 'https://www.brastemp.com.br', 'Brastemp') },
   { id: 'electrolux', name: 'Electrolux', kind: 'varejo', site: 'loja.electrolux.com.br', collect: retail('electrolux', 'https://loja.electrolux.com.br', 'Electrolux') },
   { id: 'fastshop', name: 'Fast Shop', kind: 'varejo', site: 'site.fastshop.com.br', collect: retail('fastshop', 'https://site.fastshop.com.br', 'Fast Shop') },

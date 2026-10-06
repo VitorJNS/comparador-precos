@@ -479,7 +479,7 @@ function eventItem(e, withProduct = true) {
 function healthList(o) {
   const row = (m) => `<li title="${esc(m.error ?? '')}">
       <span class="h-name"><span class="dot" style="background:${marketColor(m.id)}"></span>${esc(m.name)}</span>
-      <span style="display:flex;gap:12px;align-items:center"><span class="h-meta">${m.offers} ofertas</span>${statusBadge(m.status)}</span>
+      <span style="display:flex;gap:12px;align-items:center"><span class="h-meta">${m.offers} oferta${m.offers === 1 ? '' : 's'}</span>${statusBadge(m.status)}</span>
     </li>`;
   const group = (kind) => o.runs.markets.filter((m) => m.kind === kind).map(row).join('');
   const unsup = o.runs.unsupported
@@ -542,7 +542,7 @@ async function renderHome() {
     <section class="section grid-2">
       <div>
         <div class="section-head"><h2>Alertas recentes</h2><span class="sub">quedas, promoções e estoque</span></div>
-        <div class="panel">${o.events.length ? `<ul class="feed">${o.events.map((e) => eventItem(e)).join('')}</ul>` : `<div class="empty">${ICON.inbox}<div>Nenhuma alteração ainda. As mudanças aparecem a partir da 2ª coleta.</div></div>`}</div>
+        <div class="panel">${o.events.length ? `<ul class="feed${state.allEvents ? '' : ' feed-short'}">${o.events.map((e) => eventItem(e)).join('')}</ul>${o.events.length > 6 ? `<button class="toggle-link more feed-more" id="toggleEvents">${state.allEvents ? 'Mostrar menos' : `Mostrar todos os ${o.events.length}`}</button>` : ''}` : `<div class="empty">${ICON.inbox}<div>Nenhuma alteração ainda. As mudanças aparecem a partir da 2ª coleta.</div></div>`}</div>
       </div>
       <div>
         <div class="section-head"><h2>Lojas</h2><span class="sub">última coleta</span></div>
@@ -570,6 +570,8 @@ async function renderHome() {
       if (p) removeProduct(p, renderHome);
     }),
   );
+
+  $('#toggleEvents')?.addEventListener('click', () => { state.allEvents = !state.allEvents; renderHome(); });
 
   $('#logoutBtn')?.addEventListener('click', async () => {
     await fetch('/api/logout', { method: 'POST' });
@@ -638,13 +640,18 @@ async function renderProduct(id) {
           <div style="min-width:0">
             <h1>${esc(p.name)}</h1>
             <div class="chips">
-              <span class="chip">busca: “${esc(p.query)}”</span>
-              ${p.include.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}
-              ${p.exclude.map((t) => `<span class="chip chip-no" title="termo proibido">${esc(t)}</span>`).join('')}
-              ${p.eans.map((t) => `<span class="chip">EAN ${esc(t)}</span>`).join('')}
-              ${p.maxPrice ? `<span class="chip">até ${brl(p.maxPrice)}</span>` : ''}
               <span class="chip">${p.channels === 'todos' ? 'mercados + varejo' : 'só mercados'}</span>
+              ${p.maxPrice ? `<span class="chip">até ${brl(p.maxPrice)}</span>` : ''}
             </div>
+            <details class="search-rules">
+              <summary>Como o produto é buscado</summary>
+              <div class="chips">
+                <span class="chip">busca: “${esc(p.query)}”</span>
+                ${p.include.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}
+                ${p.exclude.map((t) => `<span class="chip chip-no" title="termo proibido">${esc(t)}</span>`).join('')}
+                ${p.eans.map((t) => `<span class="chip">EAN ${esc(t)}</span>`).join('')}
+              </div>
+            </details>
           </div>
         </div>
         <div style="display:flex;gap:8px">

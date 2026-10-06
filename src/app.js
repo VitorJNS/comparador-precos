@@ -16,6 +16,8 @@ import {
 } from './queries.js';
 
 const ON_VERCEL = !!process.env.VERCEL;
+// Banco de produção (Neon): a coleta é agendada pelo GitHub Actions, mesmo rodando no PC.
+const REMOTE_SCHEDULE = ON_VERCEL || !!process.env.DATABASE_URL;
 // Cada execução na Vercel coleta até ~4 min (limite do plano Hobby é 5) e passa o resto adiante.
 const SLICE_MS = Number(process.env.RADAR_SLICE_MS) || 240 * 1000;
 
@@ -117,7 +119,7 @@ async function lastRun() {
 async function nextRunAt() {
   const settings = loadSettings();
   const last = lastRunCache ?? (await lastRun());
-  if (ON_VERCEL) {
+  if (REMOTE_SCHEDULE) {
     // GitHub Actions às 03, 09, 15 e 21 UTC (00h, 06h, 12h, 18h em Brasília); o cron da Vercel também às 09 UTC.
     const now = new Date();
     for (let add = 0; add < 30; add++) {
@@ -142,8 +144,8 @@ async function runsSummary() {
   return {
     last,
     next: (await nextRunAt()).toISOString(),
-    intervalHours: ON_VERCEL ? 6 : (loadSettings().intervaloHoras ?? 6),
-    hosted: ON_VERCEL,
+    intervalHours: REMOTE_SCHEDULE ? 6 : (loadSettings().intervaloHoras ?? 6),
+    hosted: REMOTE_SCHEDULE,
     locked: !!process.env.PAINEL_SENHA,
     markets: MARKETS.map((m) => {
       const r = markets.find((x) => x.market === m.id);

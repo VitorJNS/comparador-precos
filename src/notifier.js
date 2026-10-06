@@ -2,7 +2,7 @@
 
 import nodemailer from 'nodemailer';
 import { q, listProducts } from './db.js';
-import { rankOffers, getOffers, nameOfMarket } from './queries.js';
+import { dedupeEvents, rankOffers, getOffers, nameOfMarket } from './queries.js';
 
 const brl = (n) => (n == null ? '—' : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -131,10 +131,11 @@ export async function sendAlertEmail(settings) {
   const pending = await q('SELECT * FROM events WHERE emailed = 0 AND type = ANY($1) ORDER BY id', [types]);
   if (!pending.length || !emailConfigured()) return 0;
 
-  const withEvents = (await listProducts()).filter((p) => pending.some((e) => e.product_id === p.id));
-  const sections = (await withOffers(withEvents, true)).map((s) => ({ ...s, events: pending.filter((e) => e.product_id === s.product.id) }));
+  const unique = dedupeEvents(pending);
+  const withEvents = (await listProducts()).filter((p) => unique.some((e) => e.product_id === p.id));
+  const sections = (await withOffers(withEvents, true)).map((s) => ({ ...s, events: unique.filter((e) => e.product_id === s.product.id) }));
 
-  const count = (t) => pending.filter((e) => e.type === t).length;
+  const count = (t) => unique.filter((e) => e.type === t).length;
   const parts = [
     count('minimo') && `${count('minimo')} novo(s) menor(es) preço(s)`,
     count('queda') && `${count('queda')} queda(s)`,
@@ -145,14 +146,14 @@ export async function sendAlertEmail(settings) {
 
   await send(`🔔 ${parts.join(', ')}`, buildHtml(sections, 'Novidades nos seus produtos'));
   await q('UPDATE events SET emailed = 1 WHERE id = ANY($1)', [pending.map((e) => e.id)]);
-  return pending.length;
+  return unique.length;
 }
 
 // HTML do e-mail de resumo, para conferir no navegador.
 export async function previewSummaryHtml() {
   const sections = [];
   for (const s of await withOffers(await listProducts({ onlyActive: true }))) {
-    sections.push({ ...s, events: await q('SELECT * FROM events WHERE product_id = $1 ORDER BY id DESC LIMIT 5', [s.product.id]) });
+    sections.push({ ...s, events: dedupeEvents(await q('SELECT * FROM events WHERE product_id = $1 ORDER BY id DESC LIMIT 15', [s.product.id])).slice(0, 5) });
   }
   return buildHtml(sections, 'Pré-visualização do e-mail');
 }
