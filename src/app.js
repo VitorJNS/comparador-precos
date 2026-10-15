@@ -11,8 +11,9 @@ import {
   q, one, createUser, deleteUser, getProduct, getUser, getUserByEmail, linkProduct, listProducts, listUsers,
   loadSettings, normEmail, saveProduct, setProductImage, unlinkProduct, updateUser, userHasProduct,
 } from './db.js';
-import { getProgress, runCollection, runMarketSlice, startRun } from './collector.js';
-import { MARKETS, UNSUPPORTED, findProductImage } from './markets/index.js';
+import { collectProductNow, getProgress, runCollection, runMarketSlice, startRun } from './collector.js';
+import { MARKETS, UNSUPPORTED, findProductImage, previewAll } from './markets/index.js';
+import { buildProduct, groupResults } from './finder.js';
 import { CATEGORIES, guessCategory, isCategory } from './categories.js';
 import { emailConfigured, panelUrl, previewSummaryHtml, sendLoginEmail, sendSummaryEmail } from './notifier.js';
 import { INVITE_TTL_DAYS, LOGIN_TTL_MIN, clearCookie, consumeLoginToken, createLoginToken, currentUser, sessionCookie } from './auth.js';
@@ -231,13 +232,15 @@ async function overview(region, user) {
 async function productDetail(id, region) {
   const p = await getProduct(id);
   if (!p) return null;
-  const [offers, hist, min, candidates, events, image] = await Promise.all([
+  const [offers, hist, min, candidates, events, image, outOfStock] = await Promise.all([
     getOffers(id, region),
     history(id, region, 180),
     historicMin(id),
     q('SELECT * FROM candidates WHERE product_id = $1 ORDER BY market, price', [id]),
     recentEvents(40, { productId: id }),
     productImage(id),
+    // Lojas onde o produto foi achado, mas sem estoque (só os nomes; os itens não aparecem).
+    q('SELECT DISTINCT market FROM offers WHERE product_id = $1 AND available = 0', [id]),
   ]);
   return {
     product: { ...p, image },
@@ -247,6 +250,7 @@ async function productDetail(id, region) {
     candidates,
     events,
     markets: MARKETS.map((m) => ({ id: m.id, name: m.name })),
+    outOfStock: outOfStock.map((r) => MARKETS.find((m) => m.id === r.market)?.name ?? r.market),
   };
 }
 
@@ -395,8 +399,36 @@ export async function handleApi(req, res, url) {
     return send(res, 200, { ok: true });
   }
 
+  // ----- cadastro simplificado: procurar nas lojas e escolher pela foto -----
+  if (method === 'POST' && parts[1] === 'buscar') {
+    const text = String((await readBody(req)).texto ?? '').trim().slice(0, 120);
+    if (text.length < 2) return send(res, 400, { error: 'Escreva o nome do produto' });
+    const { items, failed } = await previewAll(text, { regions: loadSettings().regioes });
+    return send(res, 200, { groups: groupResults(text, items), failed });
+  }
+
   if (parts[1] === 'products') {
     const id = parts[2] ? Number(parts[2]) : null;
+    if (method === 'POST' && parts[2] === 'assistido') {
+      const body = await readBody(req);
+      const chosen = (Array.isArray(body.items) ? body.items : []).slice(0, 60).map((i) => ({
+        market: String(i.market ?? ''), kind: i.kind === 'varejo' ? 'varejo' : 'mercado', extKey: String(i.extKey ?? ''),
+        ean: i.ean ? String(i.ean) : null, title: String(i.title ?? ''), image: i.image ? String(i.image) : null,
+      })).filter((i) => i.extKey && i.title);
+      const others = (Array.isArray(body.others) ? body.others : []).slice(0, 60).map(String);
+      const { product, image } = buildProduct(body.texto, chosen, { maxPrice: body.maxPrice, others });
+      // Já está na lista da pessoa (mesmo item escolhido antes)? Abre o que existe.
+      const mine = await listProducts({ userId: me.id });
+      const dup = product.accepted.length && mine.find((p) => p.accepted.some((k) => product.accepted.includes(k)));
+      if (dup) return send(res, 200, { id: dup.id, existing: true });
+      const newId = await saveProduct(product);
+      await linkProduct(me.id, newId);
+      if (image) await setProductImage(newId, image);
+      else await fillImage(await getProduct(newId));
+      // Já busca os preços deste produto, sem precisar clicar em "Atualizar agora".
+      await background(collectProductNow(newId));
+      return send(res, 201, { id: newId, collecting: true });
+    }
     if (method === 'POST' && !id) {
       const newId = await saveProduct(validateProduct(await readBody(req)));
       await linkProduct(me.id, newId);

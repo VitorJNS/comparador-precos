@@ -113,3 +113,27 @@ export async function collectPaoDeAcucar(product, ctx) {
   }
   return { offers, candidates: [...candidates.values()] };
 }
+
+// Busca rápida para a tela de cadastro: uma loja só (a do primeiro CEP), preço aproximado.
+collectPaoDeAcucar.preview = async (text, ctx) => {
+  let storeId = storeCache?.stores.keys().next().value;
+  if (!storeId) {
+    const cep = ctx.regions[0]?.ceps[0]?.cep;
+    const { data } = await getJson(`${API}/delivery/ecom/${cep}?isNal=false`, { headers: HEADERS });
+    const t = data?.content?.deliveryTypes?.find((x) => x.storeid ?? x.storeId);
+    storeId = t && (t.storeid ?? t.storeId);
+  }
+  if (!storeId) return [];
+  return (await search(text, storeId))
+    .filter((p) => !p.sellType || p.sellType === '1P')
+    .map((p) => ({
+      title: p.name,
+      url: p.urlDetails,
+      image: p.productImages?.[0] ? `${IMG}${p.productImages[0]}` : null,
+      ean: null,
+      extKey: `paodeacucar:${p.id}`,
+      price: p.price,
+      available: !!p.stock,
+      approximate: true,
+    }));
+};

@@ -9,6 +9,7 @@
 
 import { getJson } from '../http.js';
 import { evaluate, searchTerms } from '../matcher.js';
+import { pixNote, realListPrice } from './vtex.js';
 
 const API = 'https://servicespub.prod.api.aws.grupokabum.com.br/catalog/v2/search';
 const CACHE_MS = 10 * 60 * 1000;
@@ -86,16 +87,17 @@ export function createKabumSource(key) {
         continue;
       }
       if (!price) continue;
+      // price_with_discount = à vista no Pix: vira o preço principal; o do cartão vai na observação.
       const pix = a.price_with_discount && a.price_with_discount < price ? a.price_with_discount : null;
       offers.push({
         storeId: `${key}:${it.id}`,
         storeName: seller.label,
         regions: ['*'],
         ...info,
-        price,
-        listPrice: a.old_price > price ? a.old_price : null,
+        price: pix ?? price,
+        listPrice: realListPrice(a.old_price, price),
         available: !!a.available && (a.stock ?? 1) > 0,
-        note: pix ? `R$ ${pix.toFixed(2).replace('.', ',')} no PIX · preço do site` : 'Preço do site (vale para todo o Brasil)',
+        note: pix ? `${pixNote(price)} · vale para todo o Brasil` : 'Preço do site (vale para todo o Brasil)',
       });
     }
     return { offers, candidates };
@@ -108,5 +110,14 @@ export function createKabumSource(key) {
     }
     return null;
   };
+  // Busca rápida para a tela de cadastro.
+  collect.preview = async (text) =>
+    (await search(text.toLowerCase()))
+      .filter((it) => seller.owns(it.attributes))
+      .map((it) => ({
+        ...toInfo(key, it),
+        price: it.attributes.price_with_discount || it.attributes.price || null,
+        available: !!it.attributes.available && (it.attributes.stock ?? 1) > 0,
+      }));
   return collect;
 }

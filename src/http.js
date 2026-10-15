@@ -20,11 +20,16 @@ async function throttle(host) {
   if (wait > 0) await sleep(wait);
 }
 
+// Faz a requisição e já lê o corpo. O tempo limite usa um temporizador comum, desligado assim
+// que a resposta termina de chegar: com AbortSignal.timeout, o Node no Windows às vezes cai com
+// "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" quando um cancelamento acontece.
 async function request(url, { method = 'GET', body, headers = {}, retries = 2, timeoutMs = 25000 } = {}) {
   const host = new URL(url).host;
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     await throttle(host);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(new Error(`Tempo esgotado em ${host}`)), timeoutMs);
     try {
       const res = await fetch(url, {
         method,
@@ -36,27 +41,27 @@ async function request(url, { method = 'GET', body, headers = {}, retries = 2, t
           ...headers,
         },
         redirect: 'follow',
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: ctrl.signal,
       });
-      if (res.status === 429 || res.status >= 500) {
-        throw new Error(`HTTP ${res.status} em ${host}`);
-      }
-      return res;
+      const text = await res.text();
+      if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status} em ${host}`);
+      return { status: res.status, text };
     } catch (err) {
       lastErr = err;
       if (attempt < retries) await sleep(1500 * (attempt + 1));
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastErr;
 }
 
 export async function getJson(url, opts) {
-  const res = await request(url, { ...opts, headers: { Accept: 'application/json', ...(opts?.headers ?? {}) } });
-  const text = await res.text();
+  const { status, text } = await request(url, { ...opts, headers: { Accept: 'application/json', ...(opts?.headers ?? {}) } });
   try {
-    return { status: res.status, data: JSON.parse(text) };
+    return { status, data: JSON.parse(text) };
   } catch {
-    throw new Error(`Resposta não-JSON de ${new URL(url).host} (HTTP ${res.status})`);
+    throw new Error(`Resposta não-JSON de ${new URL(url).host} (HTTP ${status})`);
   }
 }
 
@@ -65,6 +70,5 @@ export async function postJson(url, body, opts) {
 }
 
 export async function getText(url, opts) {
-  const res = await request(url, { ...opts, headers: { Accept: 'text/html', ...(opts?.headers ?? {}) } });
-  return { status: res.status, text: await res.text() };
+  return request(url, { ...opts, headers: { Accept: 'text/html', ...(opts?.headers ?? {}) } });
 }

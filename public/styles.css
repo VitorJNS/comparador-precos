@@ -41,6 +41,8 @@
   --m-fastshop: #2a78d6;
   --m-kabum: #eb6834;
   --m-magalu: #1baf7a;
+  --m-samsung: #3b5bdb;
+  --m-americanas: #c2255c;
   --m-covabra: #4a3aa7;
 }
 
@@ -78,6 +80,8 @@
     --m-fastshop: #3987e5;
     --m-kabum: #d95926;
     --m-magalu: #199e70;
+    --m-samsung: #7b93f0;
+    --m-americanas: #f06595;
     --m-covabra: #9085e9;
   }
 }
@@ -114,6 +118,8 @@
   --m-fastshop: #3987e5;
   --m-kabum: #d95926;
   --m-magalu: #199e70;
+  --m-samsung: #7b93f0;
+  --m-americanas: #f06595;
   --m-covabra: #9085e9;
 }
 
@@ -506,3 +512,53 @@ details.stores ul { margin: 6px 0 0; padding-left: 14px; font-size: 12px; color:
 .enter-card h1 { font-size: 20px; margin: 0; }
 .enter-card p { margin: 0; }
 .enter-card .btn { min-width: 160px; }
+
+/* ============ Cadastro simplificado (letra e alvos maiores) ============ */
+.dialog-find { width: min(640px, calc(100vw - 24px)); }
+.find-body { font-size: 17px; max-height: min(64vh, 640px); overflow-y: auto; }
+.find-q { font-size: 20px; font-weight: 650; line-height: 1.3; margin: 0 0 4px; }
+.find-hint { font-size: 15px; color: var(--text-2); line-height: 1.45; margin: 0; }
+.find-body .field input { height: 52px; font-size: 18px; padding: 0 14px; }
+.btn-lg { height: 48px; padding: 0 20px; font-size: 16px; }
+.find-foot { flex-wrap: wrap; }
+.find-foot .form-error { flex-basis: 100%; font-size: 15px; }
+.find-list { display: grid; gap: 10px; margin: 8px 0; }
+.find-item {
+  display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 12px;
+  border: 2px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text);
+  font: inherit; cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.find-item:hover { border-color: var(--border-strong); }
+.find-item.on { border-color: var(--accent); background: var(--accent-soft); }
+.find-item:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.find-item-text { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.find-item-title { font-size: 17px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.find-item-where { font-size: 14px; color: var(--text-2); }
+.find-item-price { font-size: 17px; font-weight: 700; }
+.find-out { font-size: 13px; font-weight: 600; color: var(--critical-text); margin-left: 6px; }
+.find-check { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--border-strong); flex: none; display: grid; place-items: center; color: transparent; }
+.find-check svg { width: 18px; height: 18px; stroke-width: 3; }
+.find-item.on .find-check { background: var(--accent); border-color: var(--accent); color: #fff; }
+.find-more { margin-top: 12px; }
+.find-more summary { font-size: 16px; font-weight: 600; cursor: pointer; padding: 8px 0; }
+.find-none { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); display: grid; gap: 10px; justify-items: start; }
+.find-none .btn { white-space: normal; height: auto; min-height: 48px; text-align: left; }
+.find-loading { display: flex; align-items: center; gap: 12px; padding: 32px 4px; font-size: 17px; color: var(--text-2); }
+.spinner { width: 24px; height: 24px; border-radius: 50%; border: 3px solid var(--border-strong); border-top-color: var(--accent); animation: spin 0.9s linear infinite; flex: none; }
+.find-chosen { display: flex; gap: 14px; align-items: center; padding: 12px; border: 1px solid var(--border); border-radius: 14px; margin-bottom: 16px; }
+.find-price { border: 0; padding: 0; margin: 0; display: grid; gap: 10px; }
+.find-option { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 14px; border: 2px solid var(--border); border-radius: 12px; font-size: 17px; cursor: pointer; }
+.find-option:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.find-option input { width: 22px; height: 22px; accent-color: var(--accent); }
+@media (max-width: 640px) {
+  .find-foot .btn-lg { flex: 1; }
+  .find-item .thumb { width: 56px; height: 56px; }
+}
+
+/* Um botão por voltagem quando a mesma oferta existe em 127V e 220V. */
+.buy-volts { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.buy-volts .btn { padding: 0 10px; }
+
+/* Preço à vista no Pix. */
+.pix-tag { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle; color: var(--good-text); background: var(--good-soft); }
+.price-cell .pix-tag { margin-left: 6px; }

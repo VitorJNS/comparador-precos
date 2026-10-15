@@ -252,6 +252,16 @@ export async function listProducts({ onlyActive = false, userId = null } = {}) {
   return rows.map(rowToProduct);
 }
 
+// Desde quando o preço guardado é o à vista no Pix (antes era o do cartão). O "menor preço já
+// registrado" só compara a partir daqui, senão a virada pareceria uma queda em todos os produtos.
+let basisCache = null;
+export async function priceBasisSince() {
+  if (basisCache) return basisCache;
+  await q(`INSERT INTO kv (key, value) VALUES ('preco_pix_desde', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
+  basisCache = (await one(`SELECT value FROM kv WHERE key = 'preco_pix_desde'`)).value;
+  return basisCache;
+}
+
 // ---------- pessoas ----------
 
 export const normEmail = (s) => String(s ?? '').trim().toLowerCase();

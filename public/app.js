@@ -161,8 +161,9 @@ function statusBadge(status) {
   return `<span class="status ${cls}"><span class="status-icon">${icon}</span>${label}</span>`;
 }
 
-function thumb(src) {
-  return `<div class="thumb">${src ? `<img src="${esc(src)}" alt="" loading="lazy" onerror="this.replaceWith(document.createRange().createContextualFragment('${ICON.bottle.replace(/"/g, '&quot;')}'))">` : ICON.bottle}</div>`;
+// eager: carrega já (dentro de janelas com rolagem o "lazy" pode não disparar).
+function thumb(src, eager = false) {
+  return `<div class="thumb">${src ? `<img src="${esc(src)}" alt="" loading="${eager ? 'eager' : 'lazy'}" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createRange().createContextualFragment('${ICON.bottle.replace(/"/g, '&quot;')}'))">` : ICON.bottle}</div>`;
 }
 
 // ---------- tooltip ----------
@@ -407,9 +408,23 @@ function kpis(o) {
   </div>`;
 }
 
+// Etiqueta quando o preço mostrado é o à vista no Pix (o do cartão está na observação da oferta).
+const pixTag = (g) => (g?.stores?.some((st) => /no cart[aã]o/.test(st.note ?? '')) ? '<span class="pix-tag" title="Preço à vista no Pix. Parcelado, o valor é o do site.">no Pix</span>' : '');
+
+// Links por voltagem só quando levam a páginas diferentes (na Samsung, a voltagem é escolhida na própria página).
+function voltLinks(g) {
+  const links = (g.links ?? []).filter((l) => l.voltage);
+  return new Set(links.map((l) => l.url)).size > 1 ? links : [];
+}
+
 // Botão que abre, no site do mercado, a oferta mais barata disponível.
+// Se a linha junta voltagens diferentes, um botão por voltagem (cada uma é um anúncio no site).
 function buyButton(g, cls = 'btn-primary btn-sm') {
   if (!g?.available || !g.url) return '';
+  const byVolt = voltLinks(g);
+  if (byVolt.length > 1) {
+    return `<span class="buy-volts">${byVolt.map((l) => `<a class="btn ${cls} buy" href="${esc(l.url)}" target="_blank" rel="noopener" title="Abrir a versão ${esc(l.voltage)} no site do ${esc(g.marketName)}">${esc(l.voltage)}${ICON.ext}</a>`).join('')}</span>`;
+  }
   return `<a class="btn ${cls} buy" href="${esc(g.url)}" target="_blank" rel="noopener" title="Abrir a oferta no site do ${esc(g.marketName)}">Abrir no ${esc(g.marketName)}${ICON.ext}</a>`;
 }
 
@@ -461,7 +476,7 @@ function productCard(p) {
     const where = b.stores.length > 1 ? `${b.stores.length} lojas` : b.stores[0].name;
     body = `
       <div class="card-price">
-        <div class="price-hero num">${brlParts(b.price)}</div>
+        <div class="price-hero num">${brlParts(b.price)}${pixTag(b)}</div>
         <div class="price-where">
           <span class="market-tag"><span class="dot" style="background:${marketColor(b.market)}"></span>${esc(b.marketName)}</span>
           <span class="muted">· ${esc(where)}</span>
@@ -597,6 +612,7 @@ const CAT_ICON = {
   eletro: svgIcon('<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M5 9h14M8 5v2M8 12v4"/>'),
   eletronicos: svgIcon('<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>'),
   casa: svgIcon('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/>'),
+  limpeza: svgIcon('<path d="M9 3h6v4l2 3v10a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V10l2-3z"/><path d="M15 5h3"/><path d="M9 13h6"/>'),
   outros: svgIcon('<circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/>'),
 };
 
@@ -772,8 +788,16 @@ async function renderHome() {
 
 // ---------- detalhe do produto ----------
 
-function rankingRows(ranking) {
-  if (!ranking.length) return `<tr><td colspan="5"><div class="empty">Nenhuma oferta disponível ${state.region === 'todas' ? 'no momento' : 'nesta região'}.</div></td></tr>`;
+function rankingRows(ranking, outOfStock = [], productId = null) {
+  if (!ranking.length) {
+    const searching = state.fetching?.id === productId && Date.now() < state.fetching.until;
+    const msg = searching
+      ? '<span class="spinner" aria-hidden="true" style="display:inline-block;vertical-align:middle;margin-right:8px"></span>Procurando os preços nas lojas… a página se atualiza sozinha.'
+      : outOfStock.length
+      ? `Encontramos este produto em ${esc(outOfStock.join(', '))}, mas está <strong>sem estoque agora</strong>. Você recebe um e-mail quando voltar.`
+      : `Nenhuma oferta disponível ${state.region === 'todas' ? 'no momento' : 'nesta região'}.`;
+    return `<tr><td colspan="5"><div class="empty">${msg}</div></td></tr>`;
+  }
   return ranking
     .map((g, i) => {
       const storeList = g.stores.length > 1
@@ -788,10 +812,12 @@ function rankingRows(ranking) {
           ${note ? `<div class="store-note">${esc(note)}</div>` : ''}
         </td>
         <td class="hide-sm" style="max-width:280px"><div style="font-size:13px">${esc(g.title)}</div>${g.voltages?.length ? `<div class="store-note">${g.voltages.join(' e ')}</div>` : ''}</td>
-        <td class="price-cell num">${g.listPrice && g.listPrice > g.price ? `<span class="list">${brl(g.listPrice)}</span>` : ''}${brl(g.price)}
+        <td class="price-cell num">${g.listPrice && g.listPrice > g.price ? `<span class="list">${brl(g.listPrice)}</span>` : ''}${brl(g.price)}${pixTag(g)}
           ${g.promo ? `<div><span class="badge badge-promo">-${g.discountPct}%</span></div>` : ''}</td>
         <td><div class="row-actions">
-          ${g.url ? `<a class="btn btn-ghost btn-sm" href="${esc(g.url)}" target="_blank" rel="noopener" title="Abrir no site">${ICON.ext}</a>` : ''}
+          ${voltLinks(g).length
+            ? voltLinks(g).map((l) => `<a class="btn btn-ghost btn-sm" href="${esc(l.url)}" target="_blank" rel="noopener" title="Abrir a versão ${esc(l.voltage ?? '')} no site">${esc(l.voltage ?? 'site')}${ICON.ext}</a>`).join('')
+            : g.url ? `<a class="btn btn-ghost btn-sm" href="${esc(g.url)}" target="_blank" rel="noopener" title="Abrir no site">${ICON.ext}</a>` : ''}
           <button class="btn btn-ghost btn-sm" data-reject="${esc((g.extKeys?.length ? g.extKeys : [g.stores[0].extKey ?? g.stores[0].id]).join(','))}" data-title="${esc(g.title)}" title="Não é este produto">${ICON.x}</button>
         </div></td>
       </tr>`;
@@ -844,10 +870,10 @@ async function renderProduct(id) {
         <div class="panel hero-card">
           <div class="kpi-label">Melhor preço agora</div>
           ${best
-            ? `<div class="price-hero num" style="margin-top:6px">${brlParts(best.price)}</div>
+            ? `<div class="price-hero num" style="margin-top:6px">${brlParts(best.price)}${pixTag(best)}</div>
                <div class="price-where"><span class="market-tag"><span class="dot" style="background:${marketColor(best.market)}"></span>${esc(best.marketName)}</span><span class="muted">· ${esc(best.stores.length > 1 ? `${best.stores.length} lojas` : best.stores[0].name)}</span></div>
                <div style="margin-top:12px">${buyButton(best, 'btn-primary')}</div>`
-            : `<div class="kpi-value muted">—</div><div class="kpi-foot">nenhuma oferta disponível</div>`}
+            : `<div class="kpi-value muted">—</div><div class="kpi-foot">${d.outOfStock.length ? 'sem estoque agora' : 'nenhuma oferta disponível'}</div>`}
         </div>
         <div class="panel hero-card">
           <div class="kpi-label">Diferença entre o mais barato e o mais caro</div>
@@ -869,7 +895,7 @@ async function renderProduct(id) {
         </div>
         <div class="table-wrap"><table class="rank">
           <thead><tr><th>#</th><th>Mercado / loja</th><th class="hide-sm">Item no site</th><th>Preço</th><th></th></tr></thead>
-          <tbody>${rankingRows(d.ranking)}</tbody>
+          <tbody>${rankingRows(d.ranking, d.outOfStock, p.id)}</tbody>
         </table></div>
       </section>
 
@@ -941,7 +967,7 @@ const saveLabel = $('#saveBtn').textContent;
 
 function openProductDialog(p = null) {
   editing = p;
-  $('#dialogTitle').textContent = p ? 'Editar produto' : 'Novo produto';
+  $('#dialogTitle').textContent = p ? 'Editar produto' : 'Ajustes avançados';
   $('#formError').textContent = '';
   form.name.value = p?.name ?? '';
   form.query.value = p?.query ?? '';
@@ -956,7 +982,7 @@ function openProductDialog(p = null) {
   form.name.focus();
 }
 
-$('#addBtn').addEventListener('click', () => openProductDialog());
+$('#addBtn').addEventListener('click', () => openFind());
 dialog.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => dialog.close()));
 
 form.addEventListener('submit', async (e) => {
@@ -991,6 +1017,186 @@ form.addEventListener('submit', async (e) => {
     $('#saveBtn').textContent = saveLabel;
   }
 });
+
+// ---------- cadastro simplificado (procurar → escolher pela foto → aviso) ----------
+
+const findDlg = $('#findDialog');
+const findForm = $('#findForm');
+const find = { step: 1, text: '', groups: [], selected: new Set(), searching: false };
+
+function findStep(step) {
+  find.step = step;
+  findDlg.querySelectorAll('[data-step]').forEach((s) => (s.hidden = Number(s.dataset.step) !== step));
+  $('#findError').textContent = '';
+  $('#findBack').hidden = step === 1;
+  $('#findAdvanced').hidden = step !== 1;
+  const next = $('#findNext');
+  next.textContent = step === 1 ? 'Procurar nas lojas' : step === 2 ? 'Continuar' : 'Começar a acompanhar';
+  next.disabled = step === 2 && !find.selected.size;
+  next.hidden = step === 2 && !find.groups.length && !find.searching;
+}
+
+function openFind() {
+  find.groups = [];
+  find.selected.clear();
+  findForm.reset();
+  findForm.querySelector('.find-limit').hidden = true;
+  findStep(1);
+  findDlg.showModal();
+  findForm.texto.focus();
+}
+
+const chosenGroups = () => find.groups.filter((g) => find.selected.has(g.key));
+
+function findItem(g) {
+  const on = find.selected.has(g.key);
+  const where = g.markets.length > 2 ? `${g.markets.slice(0, 2).join(', ')} e mais ${g.markets.length - 2}` : g.markets.join(' e ');
+  return `<button type="button" class="find-item${on ? ' on' : ''}" data-pick="${esc(g.key)}" aria-pressed="${on}">
+    ${thumb(g.image, true)}
+    <span class="find-item-text">
+      <span class="find-item-title">${esc(g.title)}</span>
+      <span class="find-item-where">${esc(where)}</span>
+      <span class="find-item-price">${g.price ? `${g.approximate ? 'cerca de ' : ''}${brl(g.price)}` : ''}${g.available ? '' : ' <span class="find-out">sem estoque agora</span>'}</span>
+    </span>
+    <span class="find-check" aria-hidden="true">${ICON.check}</span>
+  </button>`;
+}
+
+function renderFindResults() {
+  const inStock = find.groups.filter((g) => g.available);
+  const out = find.groups.filter((g) => !g.available);
+  $('#findLead').textContent = find.groups.length
+    ? 'Toque no produto que você quer. Pode escolher mais de um, se for o mesmo produto em lojas diferentes.'
+    : `Não encontramos "${find.text}" nas lojas agora.`;
+  $('#findResults').innerHTML =
+    (inStock.length ? `<div class="find-list">${inStock.map(findItem).join('')}</div>` : '') +
+    (out.length
+      ? `<details class="find-more"${inStock.length ? '' : ' open'}><summary>Também encontramos, mas sem estoque agora (${out.length})</summary>
+          <p class="find-hint">Se escolher um destes, avisamos por e-mail quando voltar ao estoque.</p>
+          <div class="find-list">${out.map(findItem).join('')}</div></details>`
+      : '') +
+    `<div class="find-none">
+      <p class="find-hint">${find.groups.length ? 'Não é nenhum destes?' : 'Confira se o nome está certo e tente de novo, ou:'}</p>
+      <button type="button" class="btn btn-secondary btn-lg" id="findAnyway">Acompanhar "${esc(find.text)}" mesmo assim</button>
+    </div>`;
+  $('#findAnyway').onclick = () => { find.selected.clear(); renderSummary(); findStep(3); };
+  findStep(2);
+}
+
+$('#findResults').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-pick]');
+  if (!b) return;
+  const key = b.dataset.pick;
+  find.selected.has(key) ? find.selected.delete(key) : find.selected.add(key);
+  b.classList.toggle('on', find.selected.has(key));
+  b.setAttribute('aria-pressed', find.selected.has(key));
+  $('#findNext').disabled = !find.selected.size;
+});
+
+function renderSummary() {
+  const g = chosenGroups();
+  const anyInStock = g.some((x) => x.available);
+  $('#findSummary').innerHTML = g.length
+    ? `<div class="find-chosen">${thumb(g[0].image)}<div><div class="find-item-title">${esc(g[0].title)}</div>
+        <div class="find-hint">${g.length > 1 ? `e mais ${g.length - 1} parecido${g.length > 2 ? 's' : ''} · ` : ''}${anyInStock ? 'vamos comparar o preço em todas as lojas' : 'sem estoque agora: avisamos quando voltar'}</div></div></div>`
+    : `<div class="find-chosen"><div><div class="find-item-title">${esc(find.text)}</div><div class="find-hint">Vamos procurar nas lojas a cada 6 horas e avisar quando aparecer.</div></div></div>`;
+}
+
+findForm.addEventListener('change', (e) => {
+  if (e.target.name === 'aviso') {
+    const limit = findForm.querySelector('.find-limit');
+    limit.hidden = e.target.value !== 'limite';
+    if (!limit.hidden) findForm.maxPrice.focus();
+  }
+});
+
+findForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const next = $('#findNext');
+  if (find.step === 1) {
+    const text = findForm.texto.value.trim();
+    if (text.length < 2) {
+      $('#findError').textContent = 'Escreva o nome do produto.';
+      return;
+    }
+    find.text = text;
+    find.selected.clear();
+    find.searching = true;
+    $('#findLead').textContent = '';
+    $('#findResults').innerHTML = `<div class="find-loading"><span class="spinner" aria-hidden="true"></span>Procurando "${esc(text)}" nas lojas… leva alguns segundos.</div>`;
+    find.groups = [];
+    findStep(2);
+    next.hidden = true;
+    try {
+      const r = await api('buscar', { method: 'POST', body: { texto: text } });
+      find.groups = r.groups;
+    } catch (err) {
+      $('#findResults').innerHTML = '';
+      findStep(1);
+      $('#findError').textContent = err.message;
+      return;
+    } finally {
+      find.searching = false;
+    }
+    renderFindResults();
+    return;
+  }
+  if (find.step === 2) {
+    renderSummary();
+    findStep(3);
+    return;
+  }
+  // Passo 3: cria o produto.
+  const limit = findForm.aviso.value === 'limite' ? findForm.maxPrice.value.trim() : '';
+  if (findForm.aviso.value === 'limite' && !limit) {
+    $('#findError').textContent = 'Escreva o preço máximo, ou escolha "Sempre que o preço cair".';
+    return;
+  }
+  const chosen = chosenGroups();
+  next.disabled = true;
+  next.textContent = 'Salvando…';
+  try {
+    const r = await api('products/assistido', {
+      method: 'POST',
+      body: {
+        texto: find.text,
+        items: chosen.flatMap((g) => g.items),
+        others: find.groups.filter((g) => !find.selected.has(g.key)).map((g) => g.title),
+        maxPrice: limit || null,
+      },
+    });
+    findDlg.close();
+    state.overview = null;
+    location.hash = `#/produto/${r.id}`;
+    if (r.existing) toast('Este produto já está na sua lista');
+    else if (r.collecting) watchFirstSearch(r.id);
+  } catch (err) {
+    $('#findError').textContent = err.message;
+  } finally {
+    next.disabled = false;
+    if (find.step === 3) next.textContent = 'Começar a acompanhar';
+  }
+});
+
+// Depois do cadastro: a página do produto mostra "procurando" e se atualiza até a 1ª busca terminar.
+function watchFirstSearch(id) {
+  state.fetching = { id, until: Date.now() + 90e3 };
+  toast('Pronto! Procurando os preços nas lojas…');
+  for (const ms of [20e3, 40e3, 65e3, 90e3]) {
+    setTimeout(() => {
+      if (ms === 90e3) state.fetching = null;
+      if (location.hash === `#/produto/${id}` && !$('dialog[open]')) route();
+    }, ms);
+  }
+}
+
+$('#findBack').addEventListener('click', () => {
+  if (find.step === 3 && !find.groups.length && !find.selected.size) return findStep(find.text ? 2 : 1);
+  findStep(find.step - 1);
+  if (find.step === 1) findForm.texto.focus();
+});
+$('#findAdvanced').addEventListener('click', () => { findDlg.close(); openProductDialog(); });
+findDlg.querySelector('[data-close-find]').addEventListener('click', () => findDlg.close());
 
 // ---------- roteamento ----------
 

@@ -2,6 +2,7 @@
 // (Na Vercel quem responde é api/index.js; o agendamento é o GitHub Actions e o cron do vercel.json.)
 
 import { createServer } from 'node:http';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize as normPath } from 'node:path';
 import { ROOT, dbKind } from './db.js';
@@ -10,6 +11,22 @@ import { emailConfigured } from './notifier.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC = join(ROOT, 'public');
+
+// Erro inesperado não derruba o painel no meio de uma coleta: vai para o terminal e para
+// data/erros.log (com a pilha completa), e o servidor continua de pé.
+const ERR_LOG = join(ROOT, 'data', 'erros.log');
+function logFatal(kind) {
+  return (err) => {
+    const line = `[${new Date().toISOString()}] ${kind}: ${err?.stack ?? err}\n`;
+    console.error(`\n  ⚠ ${line}`);
+    try {
+      mkdirSync(join(ROOT, 'data'), { recursive: true });
+      appendFileSync(ERR_LOG, line);
+    } catch {}
+  };
+}
+process.on('unhandledRejection', logFatal('Promessa rejeitada sem tratamento'));
+process.on('uncaughtException', logFatal('Exceção não tratada'));
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 
 async function staticFile(res, pathname) {

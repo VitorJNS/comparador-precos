@@ -77,3 +77,9 @@ export async function collectPagueMenos(product) {
   }
   return { offers, candidates };
 }
+
+// Busca rápida para a tela de cadastro.
+collectPagueMenos.preview = async (text) =>
+  (await search(text))
+    .filter((c) => c.price)
+    .map((c) => ({ title: c.title, url: c.url, image: c.image, ean: null, extKey: `paguemenos:${c.id}`, price: c.price, available: c.available }));

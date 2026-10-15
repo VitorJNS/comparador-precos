@@ -1,6 +1,6 @@
 // Consultas de leitura usadas pelo painel e pelo e-mail.
 
-import { q, one } from './db.js';
+import { q, one, priceBasisSince } from './db.js';
 import { MARKETS } from './markets/index.js';
 import { evaluate } from './matcher.js';
 
@@ -48,8 +48,8 @@ function voltageOf(title) {
   if (/bivolt/i.test(m[0])) return 'Bivolt';
   return m[1] === '220' ? '220V' : '127V';
 }
-const baseTitle = (title) => title.replace(VOLT_RE, ' ').replace(/[\s\-–,]+$/, '').replace(/\s{2,}/g, ' ').trim();
-const titleKey = (title) =>
+export const baseTitle = (title) => title.replace(VOLT_RE, ' ').replace(/[\s\-–,]+$/, '').replace(/\s{2,}/g, ' ').trim();
+export const titleKey = (title) =>
   baseTitle(title)
     .toLowerCase()
     .normalize('NFD')
@@ -70,6 +70,7 @@ export function rankOffers(offers) {
         marketName: nameOfMarket(o.market),
         title: baseTitle(o.title),
         voltages: [],
+        links: [], // um link por voltagem (cada voltagem é um anúncio diferente no site)
         extKeys: [],
         image: o.image,
         url: o.url,
@@ -86,13 +87,17 @@ export function rankOffers(offers) {
     const g = groups.get(key);
     const volt = voltageOf(o.title);
     if (volt && !g.voltages.includes(volt)) g.voltages.push(volt);
+    if (o.url && !g.links.some((l) => l.voltage === volt)) g.links.push({ voltage: volt, url: o.url });
     if (o.ext_key && !g.extKeys.includes(o.ext_key)) g.extKeys.push(o.ext_key);
     if (!g.stores.some((s) => s.name === o.store_name)) {
       g.stores.push({ id: o.store_id, extKey: o.ext_key, name: o.store_name, regions: o.regions, note: o.note, url: o.url });
     }
     if (o.seen_at > g.seenAt) g.seenAt = o.seen_at;
   }
-  for (const g of groups.values()) g.voltages.sort();
+  for (const g of groups.values()) {
+    g.voltages.sort();
+    g.links.sort((a, b) => String(a.voltage).localeCompare(String(b.voltage)));
+  }
   return [...groups.values()].sort((a, b) => b.available - a.available || a.price - b.price);
 }
 
@@ -183,12 +188,17 @@ export async function productImage(productId) {
 }
 
 export async function historicMins() {
-  const rows = await q('SELECT product_id, MIN(price) AS min FROM observations WHERE available = 1 GROUP BY product_id');
+  const rows = await q('SELECT product_id, MIN(price) AS min FROM observations WHERE available = 1 AND collected_at >= $1 GROUP BY product_id', [
+    await priceBasisSince(),
+  ]);
   return new Map(rows.map((r) => [r.product_id, r.min]));
 }
 
 export async function historicMin(productId) {
-  return (await one('SELECT MIN(price) AS min FROM observations WHERE product_id = $1 AND available = 1', [productId]))?.min ?? null;
+  return (
+    (await one('SELECT MIN(price) AS min FROM observations WHERE product_id = $1 AND available = 1 AND collected_at >= $2', [productId, await priceBasisSince()]))
+      ?.min ?? null
+  );
 }
 
 // Um alerta por mudança: variações do mesmo item na mesma loja (127V/220V, SKUs do mesmo

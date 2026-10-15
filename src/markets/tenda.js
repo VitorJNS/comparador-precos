@@ -48,3 +48,17 @@ export async function collectTenda(product) {
   }
   return { offers, candidates };
 }
+
+// Busca rápida para a tela de cadastro.
+collectTenda.preview = async (text) =>
+  (await search(text))
+    .filter((p) => !p.seller || p.seller.id === 1)
+    .map((p) => ({
+      title: p.name,
+      url: p.url,
+      image: p.thumbnail ?? null,
+      ean: null,
+      extKey: `tenda:${p.id}`,
+      price: p.promotion?.price && p.promotion.price < p.price ? p.promotion.price : p.price,
+      available: p.isAvailable !== false && p.availability !== 'out_of_stock',
+    }));

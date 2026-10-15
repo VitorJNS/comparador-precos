@@ -68,7 +68,24 @@ Se o servidor reiniciar no meio de uma coleta, ela fica como "interrompida" e ro
 
 ## Adicionar produtos
 
-Clique em **+ Produto** no painel:
+Clique em **+ Produto**. São três passos, pensados para qualquer pessoa usar:
+
+1. **O que você quer acompanhar?** Escreva como procuraria no Google (ex.: `detergente Ypê 500ml`).
+2. **Toque no produto** na lista com fotos que vem das lojas (cerca de 5 s). Dá para escolher o mesmo
+   produto em lojas diferentes. Os que estão sem estoque ficam numa parte recolhida.
+   Não achou? **Acompanhar mesmo assim** cadastra pelo texto e avisa quando aparecer.
+3. **Quando avisar:** sempre que cair, ou só abaixo de um preço.
+
+O app monta as regras sozinho (`src/finder.js`): o código do modelo (ex.: `wd13fg`), a medida
+(`500 ml`, `13 kg`), as palavras do texto que estão nos itens escolhidos e, se a busca trouxe
+parecidos (outros sabores, outras cores), a palavra que separa o escolhido (ex.: `maçã`).
+Os itens escolhidos e os códigos de barras deles ficam aceitos direto. Logo depois de salvar, o
+produto é buscado em todas as lojas (cerca de 30 s), sem esperar a próxima coleta.
+
+Termos de várias palavras conferem em qualquer ordem: `lava e seca samsung 13kg` aceita
+"Lava e Seca 13 Kg Samsung". Quantidade e unidade ficam juntas (`13 kg` não confunde com `13 programas`).
+
+**Ajustes avançados** (no 1º passo, ou em **Editar** na página do produto) abre o formulário completo:
 
 | Campo | Para que serve |
 |---|---|
@@ -76,7 +93,7 @@ Clique em **+ Produto** no painel:
 | Termos obrigatórios | Todos precisam aparecer no nome do item. `malt\|malts` aceita qualquer um. |
 | Termos proibidos | Descarta itens com esses termos (ex.: `kit`, `miniatura`, `50 ml`). |
 | EAN | Código de barras. Quando o site informa o EAN, a correspondência é exata. |
-| Categoria | Aba em que o produto aparece (Bebidas, Eletrodomésticos, Eletrônicos, Casa e cozinha, Outros). "Automática" escolhe pelo nome; as regras ficam em `src/categories.js`. |
+| Categoria | Aba em que o produto aparece (Bebidas, Eletrodomésticos, Eletrônicos, Limpeza, Casa e cozinha, Outros). "Automática" escolhe pelo nome; as regras ficam em `src/categories.js`. |
 
 Na página do produto, **Itens descartados** lista o que a busca encontrou mas o filtro rejeitou.
 Use **É este** para incluir um item, ou o **×** no ranking para excluir um que não é o produto certo.
@@ -93,14 +110,15 @@ Use **É este** para incluir um item, ou o **×** no ranking para excluir um que
 | Tenda Atacado | Página de busca do tendaatacado.com.br | Preço único do site |
 | Covabra | API VTEX + simulação de carrinho por CEP (região de Campinas e Indaiatuba) | Sim |
 | Assaí, Sumerbol | Não suportados: não vendem online, só publicam encartes em imagem | — |
-| **Varejo:** Brastemp, Electrolux, Fast Shop | API VTEX, só o que a própria loja vende | Preço nacional do site |
+| **Varejo:** Brastemp, Electrolux, Fast Shop, Samsung | API VTEX, só o que a própria loja vende | Preço nacional do site |
 | **Varejo:** KaBuM! | API de busca do KaBuM, só o que o próprio KaBuM vende | Preço nacional do site |
-| **Varejo:** Magalu | Ofertas vendidas e entregues pela Magalu dentro do KaBuM (mesmo grupo). O site magazineluiza.com.br bloqueia acesso automatizado | Preço nacional do site |
+| **Varejo:** Magalu | Ofertas vendidas e entregues pela Magalu dentro do KaBuM (mesmo grupo) e dentro da Americanas. O site magazineluiza.com.br bloqueia acesso automatizado | Preço nacional do site |
+| **Varejo:** Americanas | API VTEX + simulação de carrinho (a busca não traz preço), só a própria Americanas e a Magalu; demais parceiros ficam de fora. Preço "de" mais de 60% acima do atual é ignorado (inflado por vendedores) | Preço nacional do site |
 | Amazon | Não suportado: bloqueia acesso automatizado (verificação anti-robô) | — |
 
 Por padrão, cada produto só é comparado em supermercados. Marketplaces (carrefour.com.br, lojas parceiras
 do Pão de Açúcar e do Tenda) ficam de fora de propósito. No formulário do produto, "Onde buscar" →
-"Supermercados + lojas de varejo" inclui também Brastemp, Electrolux, Fast Shop, KaBuM e Magalu
+"Supermercados + lojas de varejo" inclui também Brastemp, Electrolux, Fast Shop, Samsung, KaBuM, Magalu e Americanas
 (usado nas geladeiras, TV e eletroportáteis).
 
 Ao cadastrar um produto, o app já procura uma imagem dele nas lojas (a primeira que conferir com os termos).

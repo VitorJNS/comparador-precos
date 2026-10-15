@@ -5,6 +5,7 @@ export const CATEGORIES = [
   { id: 'bebidas', name: 'Bebidas', test: /whisky|macallan|salute|chivas|johnnie|glen|vinho|cerveja|\bgin\b|vodka|licor|cacha[cç]a|espumante|champagne/i },
   { id: 'eletro', name: 'Eletrodomésticos', test: /geladeira|refrigerador|freezer|liquidificador|batedeira|air ?fryer|fritadeira|cafeteira|micro-?ondas|lava|fog[aã]o|aspirador|ventilador|ar.condicionado/i },
   { id: 'eletronicos', name: 'Eletrônicos', test: /\btv\b|televis|tablet|notebook|celular|smartphone|galaxy|iphone|monitor|fone|console|videogame/i },
+  { id: 'limpeza', name: 'Limpeza', test: /detergente|sab[aã]o|amaciante|desinfetante|[aá]gua sanit[aá]ria|alvejante|limpador|multiuso|esponja|lustra|tira.?manchas|\bveja\b|\byp[eê]\b|\bomo\b|\bcomfort\b|pinho sol|papel higi[eê]nico|guardanapo|saco de lixo/i },
   { id: 'casa', name: 'Casa e cozinha', test: /sof[aá]|lixeira|talher|prato|panela|toalha|cama|colch[aã]o|mesa|cadeira|copo|ta[cç]a/i },
   { id: 'outros', name: 'Outros', test: null },
 ];
@@ -13,6 +14,9 @@ const IDS = new Set(CATEGORIES.map((c) => c.id));
 
 export const isCategory = (id) => IDS.has(id);
 
+// Limpeza é testada primeiro: "detergente lava-louças" não é eletrodoméstico.
+const BY_PRIORITY = [...CATEGORIES.filter((c) => c.id === 'limpeza'), ...CATEGORIES.filter((c) => c.id !== 'limpeza')];
+
 export function guessCategory(name) {
-  return CATEGORIES.find((c) => c.test?.test(String(name ?? '')))?.id ?? 'outros';
+  return BY_PRIORITY.find((c) => c.test?.test(String(name ?? '')))?.id ?? 'outros';
 }

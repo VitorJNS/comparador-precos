@@ -49,6 +49,18 @@ const covabra = createVtexSource({
 const retail = (key, base, name) =>
   createVtexSource({ key, catalogBase: base, storefront: base, regional: false, ownSellerOnly: true, storeLabel: () => `${name} (site)` });
 
+// Americanas (VTEX): a busca não traz preço; simula o carrinho só para a própria Americanas e para a
+// Magalu, que vende e entrega dentro da Americanas (o site da Magalu bloqueia acesso automatizado).
+// Demais parceiros do marketplace ficam de fora. Preço nacional (CEP de Campinas).
+const americanas = createVtexSource({
+  key: 'americanas',
+  catalogBase: 'https://www.americanas.com.br',
+  storefront: 'https://www.americanas.com.br',
+  regional: false,
+  storeLabel: () => 'Americanas (site)',
+  fixedSellers: { cep: '13010-001', sellers: { 1: 'Americanas (site)', magazineluiza: 'Magalu (vendido na Americanas)' } },
+});
+
 // kind: 'mercado' (padrão de todo produto) ou 'varejo' (só produtos com channels = 'todos').
 export const MARKETS = [
   { id: 'paguemenos', name: 'Pague Menos', kind: 'mercado', site: 'superpaguemenos.com.br', collect: collectPagueMenos },
@@ -63,6 +75,8 @@ export const MARKETS = [
   { id: 'fastshop', name: 'Fast Shop', kind: 'varejo', site: 'site.fastshop.com.br', collect: retail('fastshop', 'https://site.fastshop.com.br', 'Fast Shop') },
   { id: 'kabum', name: 'KaBuM!', kind: 'varejo', site: 'kabum.com.br', collect: createKabumSource('kabum') },
   { id: 'magalu', name: 'Magalu', kind: 'varejo', site: 'kabum.com.br (vendido pela Magalu)', collect: createKabumSource('magalu') },
+  { id: 'samsung', name: 'Samsung', kind: 'varejo', site: 'shop.samsung.com/br', collect: retail('samsung', 'https://shop.samsung.com/br', 'Samsung') },
+  { id: 'americanas', name: 'Americanas', kind: 'varejo', site: 'americanas.com.br (Americanas e Magalu)', collect: americanas },
 ];
 
 // Lojas pedidas que não dá para consultar.
@@ -70,9 +84,37 @@ export const UNSUPPORTED = [
   { id: 'assai', name: 'Assaí', reason: 'Não vende online; só publica encartes em imagem por loja.' },
   { id: 'sumerbol', name: 'Sumerbol', reason: 'Não tem loja online; só publica encartes em imagem.' },
   { id: 'amazon', name: 'Amazon', reason: 'Bloqueia acesso automatizado (página de verificação anti-robô).' },
+  { id: 'magalu-site', name: 'Magazine Luiza (site)', reason: 'Bloqueia acesso automatizado (Akamai). As ofertas da Magalu vêm do KaBuM e da Americanas.' },
+  { id: 'casasbahia', name: 'Casas Bahia, Ponto e Extra', reason: 'Bloqueiam acesso automatizado (HTTP 403).' },
+  { id: 'terabyte', name: 'Terabyte', reason: 'Bloqueia acesso automatizado (desafio da Cloudflare).' },
+  { id: 'pichau', name: 'Pichau', reason: 'Bloqueia acesso automatizado (desafio da Cloudflare).' },
 ];
 
 export const marketsFor = (product) => MARKETS.filter((m) => m.kind === 'mercado' || product.channels === 'todos');
+
+// Tela de cadastro: busca o texto em todas as lojas, em paralelo. Lojas que não respondem
+// a tempo ficam de fora (a lista mostra o que chegou). Retorna { items, failed }.
+export async function previewAll(text, ctx, { timeoutMs = 20000 } = {}) {
+  const items = [];
+  const failed = [];
+  await Promise.all(
+    MARKETS.filter((m) => m.collect.preview).map(async (m) => {
+      let timer;
+      try {
+        const found = await Promise.race([
+          m.collect.preview(text, ctx),
+          new Promise((_, reject) => (timer = setTimeout(() => reject(new Error('demorou demais')), timeoutMs))),
+        ]);
+        for (const it of found) items.push({ ...it, market: m.id, marketName: m.name, kind: m.kind });
+      } catch {
+        failed.push(m.name);
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+  return { items, failed };
+}
 
 // Ao cadastrar um produto: procura uma imagem nas lojas de busca rápida, em paralelo,
 // e fica com a primeira que conferir com o produto (ou null se nenhuma achar a tempo).

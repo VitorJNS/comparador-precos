@@ -52,7 +52,7 @@
   <dialog id="productDialog" class="dialog">
     <form method="dialog" id="productForm">
       <header class="dialog-head">
-        <h2 id="dialogTitle">Novo produto</h2>
+        <h2 id="dialogTitle">Ajustes avançados</h2>
         <button type="button" class="btn btn-ghost icon-btn" data-close aria-label="Fechar">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
@@ -69,6 +69,7 @@
             <option value="bebidas">Bebidas</option>
             <option value="eletro">Eletrodomésticos</option>
             <option value="eletronicos">Eletrônicos</option>
+            <option value="limpeza">Limpeza</option>
             <option value="casa">Casa e cozinha</option>
             <option value="outros">Outros</option>
           </select>
@@ -115,6 +116,49 @@
         <span class="form-error" id="formError" role="alert"></span>
         <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
         <button type="submit" class="btn btn-primary" id="saveBtn">Salvar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Cadastro simplificado: procurar, escolher pela foto, definir o aviso. -->
+  <dialog id="findDialog" class="dialog dialog-find" aria-labelledby="findTitle">
+    <form id="findForm" novalidate>
+      <header class="dialog-head">
+        <h2 id="findTitle">Acompanhar um produto</h2>
+        <button type="button" class="btn btn-ghost icon-btn" data-close-find aria-label="Fechar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </header>
+      <div class="dialog-body find-body">
+        <section data-step="1">
+          <label class="field">
+            <span class="find-q">O que você quer acompanhar?</span>
+            <input name="texto" autocomplete="off" enterkeyhint="search" placeholder="Ex.: detergente Ypê 500ml" />
+            <span class="find-hint">Escreva como você procuraria no Google: o nome, a marca e o tamanho.</span>
+          </label>
+        </section>
+        <section data-step="2" hidden>
+          <p class="find-q" id="findLead"></p>
+          <div id="findResults" aria-live="polite"></div>
+        </section>
+        <section data-step="3" hidden>
+          <div id="findSummary"></div>
+          <fieldset class="find-price">
+            <legend class="find-q">Quando você quer receber o aviso?</legend>
+            <label class="find-option"><input type="radio" name="aviso" value="sempre" checked /><span>Sempre que o preço cair</span></label>
+            <label class="find-option"><input type="radio" name="aviso" value="limite" /><span>Só quando ficar abaixo de</span></label>
+            <label class="field find-limit" hidden>
+              <span class="field-label">Preço máximo (R$)</span>
+              <input name="maxPrice" inputmode="decimal" placeholder="Ex.: 4.500,00" />
+            </label>
+          </fieldset>
+        </section>
+      </div>
+      <footer class="dialog-foot find-foot">
+        <span class="form-error" id="findError" role="alert"></span>
+        <button type="button" class="btn btn-ghost" id="findAdvanced">Ajustes avançados</button>
+        <button type="button" class="btn btn-secondary btn-lg" id="findBack" hidden>Voltar</button>
+        <button type="submit" class="btn btn-primary btn-lg" id="findNext">Procurar nas lojas</button>
       </footer>
     </form>
   </dialog>

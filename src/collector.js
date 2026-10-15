@@ -5,22 +5,30 @@
 //   finalização                 a última loja a terminar detecta novos mínimos e envia o e-mail
 // Localmente, runCollection() roda tudo de uma vez no mesmo processo.
 
-import { q, one, insertMany, listProducts, loadSettings } from './db.js';
+import { q, one, insertMany, listProducts, loadSettings, priceBasisSince } from './db.js';
 import { setMinGap } from './http.js';
-import { normalize } from './matcher.js';
+import { chunks, hasTerm, normalize } from './matcher.js';
 import { MARKETS, marketsFor } from './markets/index.js';
 import { sendAlertEmail } from './notifier.js';
 
 const now = () => new Date().toISOString();
 const isPromo = (price, list) => !!(list && price && list > price * 1.01);
-const STUCK_MS = 30 * 60 * 1000; // coleta "rodando" há mais que isso = interrompida
+const STUCK_MS = 15 * 60 * 1000; // coleta "rodando" há mais que isso = interrompida (a mais longa já vista levou ~8 min)
 const DONE = ['ok', 'parcial', 'erro'];
 
 const log = (msg) => console.log(`[${new Date().toLocaleTimeString('pt-BR')}] ${msg}`);
 
+// Oferta com preço no Pix (o do cartão fica na observação). Quando a base muda (cartão <-> Pix),
+// a diferença não é mudança de preço de verdade e não vira alerta.
+const isPixBasis = (note) => /no cart[aã]o/.test(note ?? '');
+
 function detectEvents(runId, product, market, prev, o, settings, at) {
   if (!prev) return [];
   const out = [];
+  if (isPixBasis(prev.note) !== isPixBasis(o.note)) {
+    if (o.available && !prev.available) out.push([runId, product.id, market, o.storeId, o.storeName, 'voltou', prev.price, o.price, o.listPrice ?? null, o.url ?? null, at]);
+    return out;
+  }
   const add = (type, oldPrice) =>
     out.push([runId, product.id, market, o.storeId, o.storeName, type, oldPrice, o.price, o.listPrice ?? null, o.url ?? null, at]);
 
@@ -37,10 +45,16 @@ function detectEvents(runId, product, market, prev, o, settings, at) {
 // alguma palavra da busca (ex.: "geladeira"), para não listar ferro de passar da mesma marca.
 function isRelevantCandidate(product, title) {
   const text = normalize(title);
-  const main = normalize(product.include[0]?.split('|')[0] ?? '');
-  if (main.trim() && !text.includes(main)) return false;
-  const others = normalize(product.query).trim().split(' ').filter((w) => w.length >= 2 && !main.includes(` ${w} `));
-  return !others.length || others.some((w) => text.includes(` ${w} `));
+  const mainAlts = (product.include[0] ?? '').split('|').map((s) => s.trim()).filter(Boolean);
+  const main = normalize(mainAlts[0] ?? '');
+  if (!mainAlts.length || mainAlts.some((alt) => hasTerm(text, alt))) {
+    const others = normalize(product.query).trim().split(' ').filter((w) => w.length >= 2 && !main.includes(` ${w} `));
+    return !others.length || others.some((w) => text.includes(` ${w} `));
+  }
+  // O primeiro termo não bateu (pode ser ele o errado): ainda mostra itens parecidos com a busca,
+  // para a pessoa ver o motivo em "Itens descartados" em vez de uma lista vazia.
+  const words = chunks(product.query.split(';')[0]);
+  return words.length > 0 && words.filter((w) => text.includes(` ${w} `)).length >= Math.ceil(words.length / 2);
 }
 
 const brl = (n) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -118,15 +132,16 @@ async function saveMarketResult(runId, product, market, rawResult, settings, at)
 
 // Novo menor preço histórico do produto (considerando só ofertas disponíveis).
 async function detectNewLow(runId, product, runStartedAt, at) {
+  const since = await priceBasisSince();
   const best = await one(
     'SELECT * FROM offers WHERE product_id = $1 AND available = 1 AND seen_at >= $2 ORDER BY price ASC LIMIT 1',
     [product.id, runStartedAt],
   );
   if (!best) return;
-  const hist = await one('SELECT MIN(price) AS min FROM observations WHERE product_id = $1 AND available = 1 AND collected_at < $2', [
-    product.id,
-    runStartedAt,
-  ]);
+  const hist = await one(
+    'SELECT MIN(price) AS min FROM observations WHERE product_id = $1 AND available = 1 AND collected_at < $2 AND collected_at >= $3',
+    [product.id, runStartedAt, since],
+  );
   if (hist?.min != null && best.price < hist.min - 0.005) {
     await insertMany('events', EVENT_COLS, [
       [runId, product.id, best.market, best.store_id, best.store_name, 'minimo', hist.min, best.price, best.list_price, best.url, at],
@@ -135,6 +150,7 @@ async function detectNewLow(runId, product, runStartedAt, at) {
 }
 
 export async function startRun(trigger = 'agendado') {
+  await priceBasisSince(); // marca o início da base Pix na primeira coleta com esta versão
   await q(`UPDATE runs SET status = 'interrompida', finished_at = $1 WHERE status IN ('running', 'finalizando') AND started_at < $2`, [
     now(),
     new Date(Date.now() - STUCK_MS).toISOString(),
@@ -215,6 +231,29 @@ async function maybeFinalizeRun(runId, startedAt) {
   } catch (err) {
     log(`Falha ao enviar e-mail: ${err.message}`);
   }
+}
+
+// Coleta avulsa de um produto só, logo depois de cadastrado (as lojas em paralelo, ~30 s).
+// Não é uma rodada: não aparece no progresso nem muda "Atualizado há…". O id negativo
+// (segundos desde 1970) separa os pontos dela no histórico sem criar linha em runs.
+export async function collectProductNow(productId) {
+  await priceBasisSince();
+  const product = (await listProducts()).find((p) => p.id === productId);
+  if (!product) return;
+  const settings = loadSettings();
+  const ctx = { regions: settings.regioes };
+  const runId = -Math.floor(Date.now() / 1000);
+  const at = now();
+  await Promise.all(
+    marketsFor(product).map(async (m) => {
+      try {
+        await saveMarketResult(runId, product, m.id, await m.collect(product, ctx), settings, at);
+      } catch (err) {
+        log(`${m.name} · ${product.name} (cadastro): ERRO ${err.message}`);
+      }
+    }),
+  );
+  log(`Primeira busca de "${product.name}" concluída`);
 }
 
 // Progresso da coleta mais recente, no formato que o painel espera.
