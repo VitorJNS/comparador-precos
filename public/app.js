@@ -5,7 +5,8 @@ const app = $('#app');
 const tooltip = $('#tooltip');
 
 const state = {
-  region: readPref('regiao', 'todas'),
+  // Vazio = usa a região do perfil da pessoa (definida em "Sua conta").
+  region: readPref('regiao', ''),
   cat: readPref('categoria', 'todos'),
   overview: null,
   allCandidates: false,
@@ -49,7 +50,8 @@ const marketColor = (id) => `var(--m-${id})`;
 
 async function api(path, opts = {}) {
   const sep = path.includes('?') ? '&' : '?';
-  const res = await fetch(`/api/${path}${opts.method && opts.method !== 'GET' ? '' : `${sep}regiao=${state.region}`}`, {
+  const withRegion = (!opts.method || opts.method === 'GET') && state.region;
+  const res = await fetch(`/api/${path}${withRegion ? `${sep}regiao=${state.region}` : ''}`, {
     ...opts,
     headers: { 'Content-Type': 'application/json' },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -63,27 +65,50 @@ async function api(path, opts = {}) {
   return data;
 }
 
-// ---------- login (quando o painel está protegido por PAINEL_SENHA) ----------
+// ---------- login por link no e-mail ----------
+
+function loginStep(sent) {
+  $('#loginBody').hidden = sent;
+  $('#loginSent').hidden = !sent;
+  $('#loginSubmit').hidden = sent;
+  $('#loginBack').hidden = !sent;
+  $('#loginError').textContent = '';
+}
 
 function showLogin() {
   const dlg = $('#loginDialog');
   if (dlg.open) return;
-  $('#loginError').textContent = '';
+  app.innerHTML = '';
+  loginStep(false);
   dlg.showModal();
-  $('#loginForm').senha.focus();
+  $('#loginForm').email.focus();
 }
+
+// Sem login não há o que fazer na tela: Esc não fecha o diálogo.
+$('#loginDialog').addEventListener('cancel', (e) => e.preventDefault());
+$('#loginBack').addEventListener('click', () => { loginStep(false); $('#loginForm').email.focus(); });
 
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const senha = e.currentTarget.senha.value;
-  const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ senha }) });
-  if (!res.ok) {
-    $('#loginError').textContent = 'Senha incorreta';
-    return;
+  const email = e.currentTarget.email.value.trim();
+  $('#loginSubmit').disabled = true;
+  try {
+    const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('#loginError').textContent = data.error || `Erro ${res.status}`;
+      return;
+    }
+    $('#loginSentTo').textContent = email;
+    // Só no PC, sem e-mail configurado: o link aparece aqui em vez de ir por e-mail.
+    $('#loginDev').hidden = !data.devLink;
+    if (data.devLink) $('#loginDev').innerHTML = `E-mail não configurado neste PC. <a href="${esc(data.devLink)}">Entrar por aqui</a>.`;
+    loginStep(true);
+  } catch {
+    $('#loginError').textContent = 'Sem conexão. Tente de novo.';
+  } finally {
+    $('#loginSubmit').disabled = false;
   }
-  $('#loginDialog').close();
-  e.currentTarget.reset();
-  route();
 });
 
 let toastTimer;
@@ -412,13 +437,13 @@ $('#confirmDialog').addEventListener('click', (e) => {
 async function removeProduct(p, after) {
   const ok = await confirmDialog({
     title: 'Remover produto?',
-    message: `"${p.name}" deixa de ser monitorado e todo o histórico de preços dele é apagado. Não dá para desfazer.`,
+    message: `"${p.name}" sai da sua lista e você deixa de receber alertas dele. Se mais ninguém monitora, o histórico de preços é apagado.`,
     ok: 'Remover',
   });
   if (!ok) return;
   try {
-    await api(`products/${p.id}`, { method: 'DELETE' });
-    toast('Produto removido');
+    const r = await api(`products/${p.id}`, { method: 'DELETE' });
+    toast(r.others ? 'Removido da sua lista (outras pessoas ainda monitoram)' : 'Produto removido');
     after?.();
   } catch (err) {
     toast(err.message);
@@ -491,12 +516,63 @@ function healthList(o) {
     <div class="health-sep"></div><ul class="health">${unsup}</ul>`;
 }
 
+function accountPanel(o) {
+  const me = o.me;
+  const regionOpts = [{ id: 'todas', name: 'Todas as regiões' }, ...o.regions]
+    .map((r) => `<option value="${esc(r.id)}" ${r.id === me.region ? 'selected' : ''}>${esc(r.name)}</option>`)
+    .join('');
+  return `<div class="panel settings-grid">
+    <div>
+      <h3>Sua conta</h3>
+      <p style="overflow-wrap:anywhere"><strong>${esc(me.name || me.email)}</strong>${me.name ? `<br><span class="muted" style="font-size:13px">${esc(me.email)}</span>` : ''}</p>
+      <p class="muted" style="font-size:13px">${me.isAdmin ? 'Você administra o Radar e pode convidar pessoas.' : 'Você vê e recebe alertas só dos produtos da sua lista.'}</p>
+      <button class="btn btn-ghost btn-sm" id="logoutBtn">Sair</button>
+    </div>
+    <form id="profileForm">
+      <h3>Seu perfil</h3>
+      <label class="field"><span class="field-label">Nome</span><input name="name" maxlength="60" value="${esc(me.name)}" placeholder="Como aparece nos convites" /></label>
+      <label class="field"><span class="field-label">Sua região</span><select name="region">${regionOpts}</select>
+        <span class="field-hint">Os e-mails só trazem lojas desta região. É também a região que o painel abre.</span></label>
+      <button class="btn btn-secondary btn-sm" type="submit">Salvar perfil</button>
+    </form>
+  </div>`;
+}
+
+// Só para quem administra: convidar e remover pessoas.
+function peoplePanel(o) {
+  if (!o.users) return '';
+  const row = (u) => `<li>
+      <div style="min-width:0">
+        <div class="person-name">${esc(u.name || u.email)}${u.isAdmin ? ' <span class="chip">administra</span>' : ''}</div>
+        <div class="muted person-sub">${u.name ? `${esc(u.email)} · ` : ''}${u.products} produto${u.products === 1 ? '' : 's'} · ${u.lastLogin ? `entrou ${timeAgo(u.lastLogin)}` : 'ainda não entrou'}</div>
+      </div>
+      ${u.id === o.me.id ? '' : `<div class="row-actions">
+        <button class="btn btn-ghost btn-sm" data-reinvite="${u.id}" title="Reenviar convite">${ICON.mail}</button>
+        <button class="btn btn-ghost btn-sm btn-danger" data-deluser="${u.id}" title="Remover ${esc(u.email)}">${ICON.trash}</button>
+      </div>`}
+    </li>`;
+  return `<section class="section">
+      <div class="section-head"><h2>Pessoas</h2><span class="sub">cada uma escolhe os próprios produtos e recebe os próprios alertas</span></div>
+      <div class="panel settings-grid">
+        <div><ul class="people">${o.users.map(row).join('')}</ul></div>
+        <form id="inviteForm">
+          <h3>Convidar alguém</h3>
+          <label class="field"><span class="field-label">E-mail</span><input name="email" type="email" required placeholder="sogra@exemplo.com" /></label>
+          <label class="field"><span class="field-label">Nome (opcional)</span><input name="name" maxlength="60" placeholder="Ex.: Dona Maria" /></label>
+          <span class="form-error" id="inviteError" role="alert"></span>
+          <button class="btn btn-primary btn-sm" type="submit">${ICON.mail}Enviar convite</button>
+          <p class="field-hint" style="margin-top:8px">A pessoa recebe um link para entrar (vale 7 dias) e começa com a lista vazia.</p>
+        </form>
+      </div>
+    </section>`;
+}
+
 function settingsPanel(o) {
   return `<div class="panel settings-grid">
     <div>
       <h3>Alertas por e-mail</h3>
       ${o.email.configured
-        ? `<p>${statusBadge('ok')}</p><p class="muted" style="font-size:13px">Enviando para <strong style="color:var(--text)">${esc(o.email.to)}</strong> quando houver queda, promoção, volta ao estoque ou novo menor preço.</p>
+        ? `<p>${statusBadge('ok')}</p><p class="muted" style="font-size:13px">Enviando para <strong style="color:var(--text)">${esc(o.email.to)}</strong> quando houver queda, promoção, volta ao estoque ou novo menor preço nos seus produtos.</p>
            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" id="testEmail">${ICON.mail}Enviar resumo agora</button><a class="btn btn-ghost btn-sm" href="/api/email-preview" target="_blank">Pré-visualizar</a></div>`
         : `<p>${statusBadge('erro').replace('Com erro', 'Não configurado')}</p><p class="muted" style="font-size:13px">Copie <code>.env.example</code> para <code>.env</code>, coloque uma senha de app do Gmail em <code>SMTP_PASS</code> e reinicie o app.</p><a class="btn btn-ghost btn-sm" href="/api/email-preview" target="_blank">Pré-visualizar e-mail</a>`}
     </div>
@@ -505,7 +581,6 @@ function settingsPanel(o) {
       <p>${o.runs.hosted ? 'A cada <strong>6 horas</strong>: 00h, 06h, 12h e 18h (GitHub Actions).' : `A cada <strong>${o.runs.intervalHours} horas</strong> enquanto o app estiver aberto.`}</p>
       <p class="muted" style="font-size:13px">Última coleta: ${o.runs.last ? fmtDate(o.runs.last.started_at) : '—'}<br>Próxima: ${fmtDate(o.runs.next)}</p>
       <p class="muted" style="font-size:12px">${o.runs.hosted ? 'Ajuste em <code>.github/workflows/coleta-6h.yml</code>.' : 'Ajuste em <code>config/settings.json</code>.'}</p>
-      ${o.runs.locked ? '<button class="btn btn-ghost btn-sm" id="logoutBtn" style="margin-top:6px">Sair do painel</button>' : ''}
     </div>
     <div>
       <h3>CEPs pesquisados</h3>
@@ -537,6 +612,7 @@ function catTabs(categories, products) {
 async function renderHome() {
   const o = await api('overview');
   state.overview = o;
+  if (!state.region) state.region = o.me.region;
   renderRegions(o.regions);
   renderStatus(o);
   renderProgress(o.progress);
@@ -576,6 +652,11 @@ async function renderHome() {
       </div>
     </section>
     <section class="section">
+      <div class="section-head"><h2>Sua conta</h2></div>
+      ${accountPanel(o)}
+    </section>
+    ${peoplePanel(o)}
+    <section class="section">
       <div class="section-head"><h2>Configurações</h2></div>
       ${settingsPanel(o)}
     </section>`;
@@ -609,8 +690,72 @@ async function renderHome() {
 
   $('#logoutBtn')?.addEventListener('click', async () => {
     await fetch('/api/logout', { method: 'POST' });
+    state.overview = null;
     showLogin();
   });
+
+  $('#profileForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    try {
+      const me = await api('me', { method: 'PUT', body: { name: f.name.value, region: f.region.value } });
+      // A região do perfil passa a ser a do painel neste aparelho também.
+      state.region = me.region;
+      writePref('regiao', me.region);
+      toast('Perfil salvo');
+      renderHome();
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  $('#inviteForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    $('#inviteError').textContent = '';
+    try {
+      const r = await api('users', { method: 'POST', body: { email: f.email.value, name: f.name.value } });
+      if (r.devLink) {
+        // Só no PC, sem e-mail configurado: copie o link e mande para a pessoa.
+        await confirmDialog({ title: 'Convite criado', message: `E-mail não configurado neste PC. Envie este link para a pessoa: ${r.devLink}`, ok: 'OK' });
+      } else toast(`Convite enviado para ${r.user.email}`);
+      renderHome();
+    } catch (err) {
+      $('#inviteError').textContent = err.message;
+    }
+  });
+
+  app.querySelectorAll('[data-reinvite]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const u = o.users.find((x) => x.id === Number(b.dataset.reinvite));
+      try {
+        const r = await api(`users/${u.id}/convite`, { method: 'POST' });
+        if (r.devLink) await confirmDialog({ title: 'Novo link', message: `E-mail não configurado neste PC. Envie este link: ${r.devLink}`, ok: 'OK' });
+        else toast(`Convite reenviado para ${u.email}`);
+      } catch (err) {
+        toast(err.message);
+      }
+    }),
+  );
+
+  app.querySelectorAll('[data-deluser]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const u = o.users.find((x) => x.id === Number(b.dataset.deluser));
+      const ok = await confirmDialog({
+        title: 'Remover pessoa?',
+        message: `${u.name || u.email} perde o acesso e deixa de receber alertas. Produtos que só essa pessoa monitorava são apagados com o histórico.`,
+        ok: 'Remover',
+      });
+      if (!ok) return;
+      try {
+        await api(`users/${u.id}`, { method: 'DELETE' });
+        toast('Pessoa removida');
+        renderHome();
+      } catch (err) {
+        toast(err.message);
+      }
+    }),
+  );
 
   $('#testEmail')?.addEventListener('click', async (e) => {
     e.currentTarget.disabled = true;
@@ -657,6 +802,7 @@ function rankingRows(ranking) {
 async function renderProduct(id) {
   const [d, o] = await Promise.all([api(`products/${id}`), state.overview ? Promise.resolve(state.overview) : api('overview')]);
   state.overview = o;
+  if (!state.region) state.region = o.me.region;
   renderRegions(o.regions);
   renderStatus(o);
   renderProgress(o.progress);
@@ -855,7 +1001,8 @@ async function route() {
     if (m) await renderProduct(Number(m[1]));
     else await renderHome();
   } catch (err) {
-    app.innerHTML = `<div class="panel empty">Não foi possível carregar: ${esc(err.message)}</div>`;
+    // Sem login, a tela fica limpa atrás do diálogo de entrada.
+    app.innerHTML = $('#loginDialog').open ? '' : `<div class="panel empty">Não foi possível carregar: ${esc(err.message)}</div>`;
   } finally {
     app.classList.remove('loading');
   }

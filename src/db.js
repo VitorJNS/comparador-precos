@@ -23,7 +23,7 @@ async function connect() {
   // Em deploy da Vercel (VERCEL_ENV existe) o banco precisa ser o Neon: o disco lá não é permanente.
   if (process.env.VERCEL_ENV) throw new Error('DATABASE_URL não configurada no projeto da Vercel');
   const { PGlite } = await import('@electric-sql/pglite');
-  const dir = join(ROOT, 'data', 'pglite');
+  const dir = process.env.PGLITE_DIR || join(ROOT, 'data', 'pglite');
   mkdirSync(dirname(dir), { recursive: true });
   const pg = new PGlite(dir);
   return { query: async (text, params) => (await pg.query(text, params)).rows, kind: 'pglite' };
@@ -131,9 +131,34 @@ const SCHEMA = [
   `ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT`,
   // v3: categoria (abas do painel). Vazia = sugerida pelo nome.
   `ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT`,
+  // v4: pessoas com login. Cada uma tem a própria lista de produtos; um produto pode estar
+  // na lista de várias pessoas e a coleta roda uma vez só por produto.
+  `CREATE TABLE IF NOT EXISTS users (
+    id         SERIAL PRIMARY KEY,
+    email      TEXT NOT NULL UNIQUE,
+    name       TEXT,
+    is_admin   INTEGER NOT NULL DEFAULT 0,
+    region     TEXT NOT NULL DEFAULT 'todas',
+    created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'),
+    last_login TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_products (
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, product_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS user_products_product ON user_products(product_id)`,
+  // Links de acesso enviados por e-mail (só o hash do token fica no banco).
+  `CREATE TABLE IF NOT EXISTS login_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT
+  )`,
 ];
 // Aumente quando mudar o SCHEMA: os bancos existentes rodam os comandos de novo uma vez.
-const SCHEMA_VERSION = '3';
+const SCHEMA_VERSION = '4';
 
 let ready = null;
 
@@ -159,6 +184,7 @@ function init() {
       }
       await client.query(`INSERT INTO kv (key, value) VALUES ('seeded', 'true') ON CONFLICT (key) DO NOTHING`, []);
     }
+    await bootstrapUsers();
   })().catch((err) => {
     ready = null; // tenta de novo na próxima chamada
     throw err;
@@ -216,9 +242,106 @@ export async function setProductImage(id, image) {
   await q('UPDATE products SET image = $1 WHERE id = $2', [image, id]);
 }
 
-export async function listProducts({ onlyActive = false } = {}) {
-  const rows = await q(`SELECT * FROM products ${onlyActive ? 'WHERE active = 1' : ''} ORDER BY id`);
+// userId: só os produtos da lista dessa pessoa.
+export async function listProducts({ onlyActive = false, userId = null } = {}) {
+  const where = [onlyActive && 'p.active = 1', userId && 'p.id IN (SELECT product_id FROM user_products WHERE user_id = $1)'].filter(Boolean);
+  const rows = await q(
+    `SELECT p.* FROM products p ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY p.id`,
+    userId ? [userId] : [],
+  );
   return rows.map(rowToProduct);
+}
+
+// ---------- pessoas ----------
+
+export const normEmail = (s) => String(s ?? '').trim().toLowerCase();
+
+// E-mails de EMAIL_PARA (vários, separados por vírgula, ponto e vírgula ou espaço).
+export function envEmails() {
+  return [...new Set(String(process.env.EMAIL_PARA || '').split(/[,;\s]+/).map(normEmail).filter((s) => s.includes('@')))];
+}
+
+// Primeira vez com login: cria quem administra (ADMIN_EMAIL, senão SMTP_USER, senão o 1º de
+// EMAIL_PARA) e quem já recebia os alertas (EMAIL_PARA). Os produtos que existiam entram
+// na lista de todos eles, para ninguém deixar de receber o que já recebia.
+async function bootstrapUsers() {
+  const [{ n }] = await client.query('SELECT COUNT(*)::int AS n FROM users', []);
+  if (n) return;
+  const admin = normEmail(process.env.ADMIN_EMAIL || process.env.SMTP_USER || envEmails()[0]);
+  if (!admin.includes('@')) return; // sem e-mail configurado: o primeiro acesso cria o admin (ver auth.js)
+  for (const email of [admin, ...envEmails().filter((e) => e !== admin)]) {
+    await client.query('INSERT INTO users (email, is_admin) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING', [email, email === admin ? 1 : 0]);
+  }
+  await client.query(
+    'INSERT INTO user_products (user_id, product_id) SELECT u.id, p.id FROM users u CROSS JOIN products p ON CONFLICT DO NOTHING',
+    [],
+  );
+}
+
+export const userFromRow = (r) =>
+  r && { id: r.id, email: r.email, name: r.name ?? '', isAdmin: !!r.is_admin, region: r.region ?? 'todas', lastLogin: r.last_login ?? null };
+
+export async function getUser(id) {
+  return userFromRow(await one('SELECT * FROM users WHERE id = $1', [id]));
+}
+
+export async function getUserByEmail(email) {
+  return userFromRow(await one('SELECT * FROM users WHERE email = $1', [normEmail(email)]));
+}
+
+export async function listUsers() {
+  const rows = await q(
+    `SELECT u.*, (SELECT COUNT(*)::int FROM user_products up WHERE up.user_id = u.id) AS products
+     FROM users u ORDER BY u.is_admin DESC, u.id`,
+  );
+  return rows.map((r) => ({ ...userFromRow(r), products: r.products }));
+}
+
+export async function createUser({ email, name = '', isAdmin = false }) {
+  const r = await one('INSERT INTO users (email, name, is_admin) VALUES ($1, $2, $3) RETURNING *', [normEmail(email), name || null, isAdmin ? 1 : 0]);
+  return userFromRow(r);
+}
+
+export async function updateUser(id, { name, region }) {
+  await q('UPDATE users SET name = COALESCE($2, name), region = COALESCE($3, region) WHERE id = $1', [id, name ?? null, region ?? null]);
+}
+
+export async function deleteUser(id) {
+  // Produtos que só essa pessoa monitorava saem junto (com o histórico).
+  await q(
+    `DELETE FROM products WHERE id IN (SELECT product_id FROM user_products WHERE user_id = $1)
+     AND id NOT IN (SELECT product_id FROM user_products WHERE user_id <> $1)`,
+    [id],
+  );
+  await q('DELETE FROM users WHERE id = $1', [id]);
+}
+
+export async function linkProduct(userId, productId) {
+  await q('INSERT INTO user_products (user_id, product_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [userId, productId]);
+}
+
+export async function userHasProduct(userId, productId) {
+  return !!(await one('SELECT 1 AS ok FROM user_products WHERE user_id = $1 AND product_id = $2', [userId, productId]));
+}
+
+// Tira o produto da lista da pessoa. Se mais ninguém monitora, apaga o produto e o histórico.
+// Retorna quantas pessoas ainda monitoram.
+export async function unlinkProduct(userId, productId) {
+  await q('DELETE FROM user_products WHERE user_id = $1 AND product_id = $2', [userId, productId]);
+  const { n } = await one('SELECT COUNT(*)::int AS n FROM user_products WHERE product_id = $1', [productId]);
+  if (!n) await q('DELETE FROM products WHERE id = $1', [productId]);
+  return n;
+}
+
+// Quem monitora cada produto (para separar os e-mails).
+export async function watchersByProduct() {
+  const rows = await q('SELECT user_id, product_id FROM user_products');
+  const map = new Map();
+  for (const r of rows) {
+    if (!map.has(r.user_id)) map.set(r.user_id, new Set());
+    map.get(r.user_id).add(r.product_id);
+  }
+  return map;
 }
 
 export async function getProduct(id) {

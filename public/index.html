@@ -119,18 +119,25 @@
     </form>
   </dialog>
 
-  <dialog id="loginDialog" class="dialog" style="width:min(380px, calc(100vw - 32px))">
+  <dialog id="loginDialog" class="dialog" style="width:min(400px, calc(100vw - 32px))">
     <form id="loginForm">
-      <header class="dialog-head"><h2>Radar de Preços</h2></header>
-      <div class="dialog-body">
+      <header class="dialog-head"><h2>Entrar no Radar de Preços</h2></header>
+      <div class="dialog-body" id="loginBody">
         <label class="field">
-          <span class="field-label">Senha do painel</span>
-          <input type="password" name="senha" required autocomplete="current-password" />
+          <span class="field-label">Seu e-mail</span>
+          <input type="email" name="email" required autocomplete="email" inputmode="email" placeholder="voce@exemplo.com" />
+          <span class="field-hint">Enviamos um link de acesso para o seu e-mail. Não precisa de senha.</span>
         </label>
+      </div>
+      <div class="dialog-body" id="loginSent" hidden>
+        <p style="margin:0">Se este e-mail estiver cadastrado, o link chega em instantes em <strong id="loginSentTo"></strong>. Abra o e-mail e toque em <strong>Entrar</strong>.</p>
+        <p class="muted" style="font-size:13px;margin:12px 0 0">Não chegou? Confira o spam. Para usar o Radar, quem administra precisa ter convidado você.</p>
+        <p id="loginDev" hidden style="font-size:13px;margin:12px 0 0"></p>
       </div>
       <footer class="dialog-foot">
         <span class="form-error" id="loginError" role="alert"></span>
-        <button type="submit" class="btn btn-primary">Entrar</button>
+        <button type="button" class="btn btn-ghost" id="loginBack" hidden>Usar outro e-mail</button>
+        <button type="submit" class="btn btn-primary" id="loginSubmit">Enviar link</button>
       </footer>
     </form>
   </dialog>

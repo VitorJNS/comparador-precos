@@ -14,7 +14,7 @@ Roda de dois jeitos: **na Vercel** (online 24h, banco Neon) ou **no seu PC**.
    `npm run migrar`
 3. **Vercel:** `npx vercel login` (uma vez) e depois `npx vercel link` nesta pasta.
 4. **Variáveis** (Vercel → Project → Settings → Environment Variables):
-   `DATABASE_URL`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_PARA` e `CRON_SECRET` (`PAINEL_SENHA` é opcional).
+   `DATABASE_URL`, `SMTP_USER`, `SMTP_PASS`, `CRON_SECRET` e, se quiser, `ADMIN_EMAIL` e `EMAIL_PARA`.
 5. **Deploy:** `npx vercel deploy --prod` (ou `npm run deploy`).
 
 Como funciona lá:
@@ -23,7 +23,19 @@ Como funciona lá:
   A última loja a terminar envia o e-mail.
 - **Agendamento:** o GitHub Actions (`.github/workflows/coleta-6h.yml`) dispara a coleta às 00h, 06h, 12h e 18h
   (pode atrasar alguns minutos). O cron da Vercel (`vercel.json`, 1x por dia no plano grátis) fica de reserva.
-- Se `PAINEL_SENHA` estiver definida, o painel pede essa senha. As rotas de coleta sempre exigem `CRON_SECRET`.
+- As rotas de coleta sempre exigem `CRON_SECRET`.
+
+## Login e pessoas
+
+- Cada pessoa entra com o próprio e-mail: o painel manda um **link de acesso** (vale 30 min, uso único). Não há senha.
+- Só entra quem foi **convidado**. Quem administra convida em **Pessoas** (fim da tela inicial); o convite vale 7 dias.
+- Cada pessoa tem a **própria lista de produtos** e recebe e-mail só dos produtos dela, só das lojas da região
+  escolhida em **Sua conta**. Um produto pode estar na lista de várias pessoas; a coleta roda uma vez só.
+- Remover um produto tira da sua lista; o histórico só é apagado quando mais ninguém monitora.
+- **Primeira vez** (migração): quem administra é `ADMIN_EMAIL` (ou, se vazio, `SMTP_USER`). Os e-mails de
+  `EMAIL_PARA` viram pessoas cadastradas. Todos começam com os produtos que já existiam.
+  Depois disso, `EMAIL_PARA` não é mais usado: gerencie pelo painel.
+- No PC sem e-mail configurado, o link aparece na própria tela (e no terminal).
 
 ## No seu PC
 

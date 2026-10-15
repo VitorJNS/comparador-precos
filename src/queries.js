@@ -201,12 +201,17 @@ export function dedupeEvents(rows) {
   });
 }
 
-export async function recentEvents(limit = 50, productId = null) {
+// productId: só desse produto; userId: só dos produtos da lista dessa pessoa.
+export async function recentEvents(limit = 50, { productId = null, userId = null } = {}) {
   const rows = productId
     ? await q(
         'SELECT e.*, p.name AS product_name FROM events e JOIN products p ON p.id = e.product_id WHERE e.product_id = $1 ORDER BY e.id DESC LIMIT $2',
         [productId, limit * 3],
       )
-    : await q('SELECT e.*, p.name AS product_name FROM events e JOIN products p ON p.id = e.product_id ORDER BY e.id DESC LIMIT $1', [limit * 3]);
+    : await q(
+        `SELECT e.*, p.name AS product_name FROM events e JOIN products p ON p.id = e.product_id
+         WHERE e.product_id IN (SELECT product_id FROM user_products WHERE user_id = $2) ORDER BY e.id DESC LIMIT $1`,
+        [limit * 3, userId],
+      );
   return dedupeEvents(rows).slice(0, limit).map((e) => ({ ...e, marketName: nameOfMarket(e.market) }));
 }

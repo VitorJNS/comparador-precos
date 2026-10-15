@@ -2,15 +2,20 @@
 // função da Vercel (api/index.js).
 //
 // Segurança:
-//   - PAINEL_SENHA: opcional. Se definida, a API exige login (cookie assinado).
+//   - Login por link no e-mail (ver auth.js). Só entra quem foi convidado; cada pessoa
+//     vê e recebe alertas só dos produtos da própria lista. Quem administra convida pessoas.
 //   - CRON_SECRET: protege as rotas /api/cron/* (a Vercel envia "Authorization: Bearer <CRON_SECRET>").
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
-import { q, one, getProduct, listProducts, loadSettings, saveProduct, setProductImage } from './db.js';
+import { timingSafeEqual } from 'node:crypto';
+import {
+  q, one, createUser, deleteUser, getProduct, getUser, getUserByEmail, linkProduct, listProducts, listUsers,
+  loadSettings, normEmail, saveProduct, setProductImage, unlinkProduct, updateUser, userHasProduct,
+} from './db.js';
 import { getProgress, runCollection, runMarketSlice, startRun } from './collector.js';
 import { MARKETS, UNSUPPORTED, findProductImage } from './markets/index.js';
 import { CATEGORIES, guessCategory, isCategory } from './categories.js';
-import { emailConfigured, previewSummaryHtml, recipients, sendSummaryEmail } from './notifier.js';
+import { emailConfigured, panelUrl, previewSummaryHtml, sendLoginEmail, sendSummaryEmail } from './notifier.js';
+import { INVITE_TTL_DAYS, LOGIN_TTL_MIN, clearCookie, consumeLoginToken, createLoginToken, currentUser, sessionCookie } from './auth.js';
 import {
   getOffers, getOffersByProduct, historicMin, historicMins, history, productImage, productImages,
   purgeNonMatching, rankOffers, recentEvents, sparkSeries,
@@ -29,31 +34,55 @@ function send(res, status, body, headers = {}) {
   res.end(JSON.stringify(body));
 }
 
+// Aceita JSON e também formulário (a página /api/entrar funciona sem JavaScript).
 async function readBody(req) {
-  if (req.body !== undefined) return typeof req.body === 'string' ? (req.body ? JSON.parse(req.body) : {}) : req.body ?? {};
-  let raw = '';
-  for await (const chunk of req) raw += chunk;
-  return raw ? JSON.parse(raw) : {};
+  if (req.body !== undefined && typeof req.body !== 'string') return req.body ?? {};
+  let raw = req.body ?? '';
+  if (req.body === undefined) for await (const chunk of req) raw += chunk;
+  if (!raw) return {};
+  if (String(req.headers['content-type'] ?? '').includes('application/x-www-form-urlencoded')) return Object.fromEntries(new URLSearchParams(raw));
+  return JSON.parse(raw);
+}
+
+function sendHtml(res, status, html, headers = {}) {
+  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
+  res.end(html);
 }
 
 // ---------- autenticação ----------
 
-const COOKIE = 'radar_sessao';
-const sign = (value) => createHmac('sha256', process.env.PAINEL_SENHA).update(value).digest('hex');
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
-function sessionToken() {
-  const exp = Date.now() + 30 * 864e5;
-  return `${exp}.${sign(String(exp))}`;
+// Gera o link de acesso e manda por e-mail. Sem e-mail configurado (só no PC), devolve o link
+// para aparecer na tela. Retorna { sent, devLink } ou { limited: true }.
+async function deliverLoginLink(user, { invite = false, invitedBy = null } = {}) {
+  const ttlMs = invite ? INVITE_TTL_DAYS * 864e5 : LOGIN_TTL_MIN * 60e3;
+  const token = await createLoginToken(user.id, ttlMs);
+  if (!token) return { limited: true };
+  const link = `${panelUrl()}/api/entrar?token=${encodeURIComponent(token)}`;
+  if (!emailConfigured()) {
+    if (ON_VERCEL) throw new Error('E-mail não configurado: preencha SMTP_USER e SMTP_PASS nas variáveis da Vercel');
+    console.log(`Link de acesso para ${user.email}: ${link}`);
+    return { sent: false, devLink: link };
+  }
+  await sendLoginEmail(user, link, { invite, invitedBy, ttlText: invite ? `${INVITE_TTL_DAYS} dias` : `${LOGIN_TTL_MIN} minutos` });
+  return { sent: true };
 }
 
-function validSession(req) {
-  const m = (req.headers.cookie ?? '').match(new RegExp(`${COOKIE}=([^;]+)`));
-  if (!m) return false;
-  const [exp, sig] = decodeURIComponent(m[1]).split('.');
-  if (!exp || !sig || Number(exp) < Date.now()) return false;
-  const a = Buffer.from(sig);
-  const b = Buffer.from(sign(exp));
-  return a.length === b.length && timingSafeEqual(a, b);
+// Página aberta pelo link do e-mail. O token só é usado no clique (POST): leitores de link
+// que alguns provedores de e-mail usam para checar segurança abrem com GET e não gastariam o link.
+function enterPage(token, error = '') {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entrar · Radar de Preços</title><link rel="stylesheet" href="/styles.css"></head>
+<body><main class="enter-page"><div class="panel enter-card">
+  <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 17l5-6 4 3 7-8" /></svg></span>
+  <h1>Radar de Preços</h1>
+  ${error
+    ? `<p class="form-error" role="alert">${esc(error)}</p><a class="btn btn-primary" href="/">Pedir um novo link</a>`
+    : `<p class="muted">Toque no botão para entrar.</p>
+       <form method="post" action="/api/entrar"><input type="hidden" name="token" value="${esc(token)}"><button class="btn btn-primary" type="submit">Entrar</button></form>`}
+</div></main></body></html>`;
 }
 
 function cronAuthorized(req) {
@@ -147,7 +176,6 @@ async function runsSummary() {
     next: (await nextRunAt()).toISOString(),
     intervalHours: REMOTE_SCHEDULE ? 6 : (loadSettings().intervaloHoras ?? 6),
     hosted: REMOTE_SCHEDULE,
-    locked: !!process.env.PAINEL_SENHA,
     markets: MARKETS.map((m) => {
       const r = markets.find((x) => x.market === m.id);
       return { id: m.id, name: m.name, kind: m.kind, site: m.site, status: r?.status ?? 'pendente', offers: r?.offers ?? 0, error: r?.error ?? null, ms: r?.ms ?? null };
@@ -156,19 +184,22 @@ async function runsSummary() {
   };
 }
 
-async function overview(region) {
-  const [products, offersBy, sparks, mins, images, runs, progress, events, drops] = await Promise.all([
-    listProducts(),
+async function overview(region, user) {
+  const [products, offersBy, sparks, mins, images, runs, progress, events, drops, users] = await Promise.all([
+    listProducts({ userId: user.id }),
     getOffersByProduct(region),
     sparkSeries(region, 60),
     historicMins(),
     productImages(),
     runsSummary(),
     getProgress(),
-    recentEvents(30),
-    one(`SELECT COUNT(*)::int AS n FROM events WHERE type IN ('queda','minimo') AND created_at >= $1`, [
-      new Date(Date.now() - 7 * 864e5).toISOString(),
-    ]),
+    recentEvents(30, { userId: user.id }),
+    one(
+      `SELECT COUNT(*)::int AS n FROM events WHERE type IN ('queda','minimo') AND created_at >= $1
+       AND product_id IN (SELECT product_id FROM user_products WHERE user_id = $2)`,
+      [new Date(Date.now() - 7 * 864e5).toISOString(), user.id],
+    ),
+    user.isAdmin ? listUsers() : null,
   ]);
   const cards = products.map((p) => {
     const ranked = rankOffers(offersBy.get(p.id) ?? []);
@@ -191,7 +222,9 @@ async function overview(region) {
     progress,
     events,
     stats: { drops7d: drops.n, promos: cards.reduce((n, p) => n + p.promoCount, 0) },
-    email: { configured: emailConfigured(), to: recipients().join(', ') || null },
+    email: { configured: emailConfigured(), to: user.email },
+    me: user,
+    users,
   };
 }
 
@@ -203,7 +236,7 @@ async function productDetail(id, region) {
     history(id, region, 180),
     historicMin(id),
     q('SELECT * FROM candidates WHERE product_id = $1 ORDER BY market, price', [id]),
-    recentEvents(40, id),
+    recentEvents(40, { productId: id }),
     productImage(id),
   ]);
   return {
@@ -262,7 +295,6 @@ async function fillImage(product) {
 
 export async function handleApi(req, res, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
-  const region = url.searchParams.get('regiao') || 'todas';
   const method = req.method;
 
   // Rotas de coleta agendada (cron da Vercel e encadeamento entre execuções).
@@ -282,48 +314,99 @@ export async function handleApi(req, res, url) {
     return send(res, 404, { error: 'Rota não encontrada' });
   }
 
-  // Login do painel (só quando PAINEL_SENHA estiver definida).
-  if (parts[1] === 'login' && method === 'POST') {
-    const { senha } = await readBody(req);
-    const a = Buffer.from(String(senha ?? ''));
-    const b = Buffer.from(process.env.PAINEL_SENHA ?? '');
-    if (!process.env.PAINEL_SENHA || (a.length === b.length && timingSafeEqual(a, b))) {
-      const secure = ON_VERCEL ? '; Secure' : '';
-      return send(res, 200, { ok: true }, {
-        'Set-Cookie': `${COOKIE}=${encodeURIComponent(process.env.PAINEL_SENHA ? sessionToken() : '')}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${secure}`,
-      });
-    }
-    return send(res, 401, { error: 'Senha incorreta' });
-  }
-  if (parts[1] === 'logout') return send(res, 200, { ok: true }, { 'Set-Cookie': `${COOKIE}=; Path=/; Max-Age=0` });
-  if (process.env.PAINEL_SENHA && !validSession(req)) return send(res, 401, { error: 'login' });
+  // ----- entrada (sem sessão) -----
 
-  if (method === 'GET' && parts[1] === 'overview') return send(res, 200, await overview(region));
+  // Pede o link de acesso. A resposta é a mesma para e-mail cadastrado ou não (não revela quem usa o app).
+  if (parts[1] === 'login' && method === 'POST') {
+    const email = normEmail((await readBody(req)).email);
+    if (!isEmail(email)) return send(res, 400, { error: 'Informe um e-mail válido' });
+    let user = await getUserByEmail(email);
+    // Banco novo no PC, sem ninguém cadastrado: o primeiro e-mail vira o administrador.
+    if (!user && !ON_VERCEL && !(await one('SELECT 1 AS x FROM users LIMIT 1'))) user = await createUser({ email, isAdmin: true });
+    if (!user) return send(res, 200, { ok: true });
+    const r = await deliverLoginLink(user);
+    if (r.limited) return send(res, 429, { error: 'Muitos pedidos de link. Espere alguns minutos e tente de novo.' });
+    return send(res, 200, { ok: true, ...(r.devLink ? { devLink: r.devLink } : {}) });
+  }
+  if (parts[1] === 'entrar') {
+    if (method === 'GET') return sendHtml(res, 200, enterPage(url.searchParams.get('token') ?? ''));
+    if (method === 'POST') {
+      const user = await consumeLoginToken((await readBody(req)).token);
+      if (!user) return sendHtml(res, 400, enterPage('', 'Este link venceu ou já foi usado.'));
+      return sendHtml(res, 303, '', { Location: '/', 'Set-Cookie': await sessionCookie(user.id, ON_VERCEL) });
+    }
+  }
+  if (parts[1] === 'logout') return send(res, 200, { ok: true }, { 'Set-Cookie': clearCookie(ON_VERCEL) });
+
+  const me = await currentUser(req);
+  if (!me) return send(res, 401, { error: 'login' });
+  // Região: a escolhida na tela; sem escolha, a do perfil da pessoa.
+  const region = url.searchParams.get('regiao') || me.region || 'todas';
+
+  if (method === 'GET' && parts[1] === 'overview') return send(res, 200, await overview(region, me));
   if (method === 'GET' && parts[1] === 'progress') return send(res, 200, await getProgress());
   if (method === 'POST' && parts[1] === 'run') return send(res, 202, await startCollection(req, 'manual'));
 
+  // ----- perfil -----
+  if (parts[1] === 'me' && method === 'PUT') {
+    const body = await readBody(req);
+    const regions = loadSettings().regioes.map((r) => r.id);
+    const region = body.region === 'todas' || regions.includes(body.region) ? body.region : undefined;
+    const name = body.name !== undefined ? String(body.name).trim().slice(0, 60) : undefined;
+    await updateUser(me.id, { name, region });
+    return send(res, 200, await getUser(me.id));
+  }
+
+  // ----- pessoas (só administrador) -----
+  if (parts[1] === 'users') {
+    if (!me.isAdmin) return send(res, 403, { error: 'Só quem administra pode gerenciar pessoas' });
+    const id = parts[2] ? Number(parts[2]) : null;
+    if (method === 'GET' && !id) return send(res, 200, await listUsers());
+    if (method === 'POST' && !id) {
+      const body = await readBody(req);
+      const email = normEmail(body.email);
+      if (!isEmail(email)) return send(res, 400, { error: 'Informe um e-mail válido' });
+      if (await getUserByEmail(email)) return send(res, 409, { error: 'Esse e-mail já está cadastrado' });
+      const user = await createUser({ email, name: String(body.name ?? '').trim().slice(0, 60) });
+      const r = await deliverLoginLink(user, { invite: true, invitedBy: me.name || me.email });
+      return send(res, 201, { user, sent: !!r.sent, ...(r.devLink ? { devLink: r.devLink } : {}) });
+    }
+    const target = id && (await getUser(id));
+    if (!target) return send(res, 404, { error: 'Pessoa não encontrada' });
+    if (method === 'POST' && parts[3] === 'convite') {
+      const r = await deliverLoginLink(target, { invite: true, invitedBy: me.name || me.email });
+      if (r.limited) return send(res, 429, { error: 'Muitos convites para essa pessoa. Espere uma hora.' });
+      return send(res, 200, { sent: !!r.sent, ...(r.devLink ? { devLink: r.devLink } : {}) });
+    }
+    if (method === 'DELETE' && !parts[3]) {
+      if (target.id === me.id) return send(res, 400, { error: 'Você não pode remover a si mesmo' });
+      await deleteUser(target.id);
+      return send(res, 200, { ok: true });
+    }
+    return send(res, 404, { error: 'Rota não encontrada' });
+  }
+
   if (method === 'GET' && parts[1] === 'email-preview') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    return res.end(await previewSummaryHtml());
+    return res.end(await previewSummaryHtml(me));
   }
   if (method === 'POST' && parts[1] === 'email-teste') {
-    await sendSummaryEmail();
+    await sendSummaryEmail(me);
     return send(res, 200, { ok: true });
   }
 
   if (parts[1] === 'products') {
     const id = parts[2] ? Number(parts[2]) : null;
-    if (method === 'GET' && id) {
-      const d = await productDetail(id, region);
-      return d ? send(res, 200, d) : send(res, 404, { error: 'Produto não encontrado' });
-    }
     if (method === 'POST' && !id) {
       const newId = await saveProduct(validateProduct(await readBody(req)));
+      await linkProduct(me.id, newId);
       const image = await fillImage(await getProduct(newId));
       return send(res, 201, { id: newId, image });
     }
-    const existing = id && (await getProduct(id));
+    // Só quem tem o produto na lista mexe nele (quem administra também, para ajudar a ajustar a busca).
+    const existing = id && (me.isAdmin || (await userHasProduct(me.id, id))) && (await getProduct(id));
     if (!existing) return send(res, 404, { error: 'Produto não encontrado' });
+    if (method === 'GET' && !parts[3]) return send(res, 200, await productDetail(id, region));
 
     if (method === 'PUT' && !parts[3]) {
       await saveProduct(validateProduct(await readBody(req), existing));
@@ -333,8 +416,9 @@ export async function handleApi(req, res, url) {
       return send(res, 200, { ok: true, removed });
     }
     if (method === 'DELETE' && !parts[3]) {
-      await q('DELETE FROM products WHERE id = $1', [id]);
-      return send(res, 200, { ok: true });
+      // Sai da lista de quem removeu; o produto só é apagado se mais ninguém monitora.
+      const others = await unlinkProduct(me.id, id);
+      return send(res, 200, { ok: true, others });
     }
     // Aceitar/descartar manualmente um item encontrado em um site.
     if (method === 'POST' && (parts[3] === 'aceitar' || parts[3] === 'descartar')) {

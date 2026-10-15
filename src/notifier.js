@@ -1,7 +1,7 @@
 // Envio de alertas por e-mail (SMTP; pensado para Gmail com "senha de app").
 
 import nodemailer from 'nodemailer';
-import { q, listProducts } from './db.js';
+import { q, listProducts, listUsers, watchersByProduct } from './db.js';
 import { dedupeEvents, rankOffers, getOffers, nameOfMarket } from './queries.js';
 
 const brl = (n) => (n == null ? '—' : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
@@ -66,18 +66,18 @@ function rankingBlock(offers) {
     .join('')}</table>`;
 }
 
-// Carrega as ofertas de cada produto; resumos só listam os que têm alguma disponível.
-async function withOffers(products, keepEmpty = false) {
+// Carrega as ofertas de cada produto (na região da pessoa); resumos só listam os que têm alguma disponível.
+async function withOffers(products, keepEmpty = false, region = 'todas') {
   const out = [];
   for (const p of products) {
-    const offers = await getOffers(p.id);
+    const offers = await getOffers(p.id, region);
     if (offers.length || keepEmpty) out.push({ product: p, offers });
   }
   return out;
 }
 
 // Endereço do painel: na Vercel, o domínio de produção; localmente, localhost.
-const panelUrl = () =>
+export const panelUrl = () =>
   process.env.PAINEL_URL ||
   (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : `http://localhost:${process.env.PORT || 3000}`);
 
@@ -101,27 +101,32 @@ function buildHtml(sections, title) {
   </div></body></html>`;
 }
 
-/** Destinatários: EMAIL_PARA aceita vários e-mails separados por vírgula, ponto e vírgula ou espaço. */
-export function recipients() {
-  const list = String(process.env.EMAIL_PARA || process.env.SMTP_USER || '')
-    .split(/[,;\s]+/)
-    .map((s) => s.trim())
-    .filter((s) => s.includes('@'));
-  return [...new Set(list)];
+// Cada pessoa recebe o próprio e-mail (ninguém vê o endereço nem os produtos dos outros).
+async function send(to, subject, html) {
+  await transport().sendMail({ from: `"Radar de Preços" <${process.env.SMTP_USER}>`, to, subject, html });
 }
 
-async function send(subject, html) {
-  const to = recipients();
-  await transport().sendMail({
-    from: `"Radar de Preços" <${process.env.SMTP_USER}>`,
-    // Com mais de um destinatário, vão em cópia oculta: ninguém vê o e-mail dos outros.
-    ...(to.length > 1 ? { to: process.env.SMTP_USER, bcc: to } : { to }),
-    subject,
-    html,
-  });
+function subjectFor(events) {
+  const count = (t) => events.filter((e) => e.type === t).length;
+  return `🔔 ${[
+    count('minimo') && `${count('minimo')} novo(s) menor(es) preço(s)`,
+    count('queda') && `${count('queda')} queda(s)`,
+    count('promocao') && `${count('promocao')} promoção(ões)`,
+    count('voltou') && `${count('voltou')} volta(s) ao estoque`,
+    count('aumento') && `${count('aumento')} aumento(s)`,
+  ]
+    .filter(Boolean)
+    .join(', ')}`;
 }
 
-// Envia as novidades ainda não enviadas. Retorna quantas foram incluídas.
+// Regiões de cada loja, por produto (para mandar a cada pessoa só o que é da região dela).
+async function storeRegions(productIds) {
+  const rows = await q('SELECT product_id, store_id, regions FROM offers WHERE product_id = ANY($1)', [productIds]);
+  return new Map(rows.map((r) => [`${r.product_id}|${r.store_id}`, JSON.parse(r.regions)]));
+}
+
+// Envia as novidades ainda não enviadas: um e-mail por pessoa, só com os produtos da lista dela
+// e as lojas da região dela. Retorna quantas novidades saíram.
 export async function sendAlertEmail(settings) {
   const types = ['minimo', 'queda', 'promocao', 'voltou', ...(settings.notificarAumentos ? ['aumento'] : [])];
   const cutoff = new Date(Date.now() - 2 * 864e5).toISOString();
@@ -132,35 +137,70 @@ export async function sendAlertEmail(settings) {
   if (!pending.length || !emailConfigured()) return 0;
 
   const unique = dedupeEvents(pending);
-  const withEvents = (await listProducts()).filter((p) => unique.some((e) => e.product_id === p.id));
-  const sections = (await withOffers(withEvents, true)).map((s) => ({ ...s, events: unique.filter((e) => e.product_id === s.product.id) }));
+  const [users, watched, allProducts, regionsOf] = await Promise.all([
+    listUsers(),
+    watchersByProduct(),
+    listProducts(),
+    storeRegions([...new Set(unique.map((e) => e.product_id))]),
+  ]);
+  const inRegion = (e, region) => {
+    if (region === 'todas') return true;
+    const regs = regionsOf.get(`${e.product_id}|${e.store_id}`) ?? ['*'];
+    return regs.includes('*') || regs.includes(region);
+  };
 
-  const count = (t) => unique.filter((e) => e.type === t).length;
-  const parts = [
-    count('minimo') && `${count('minimo')} novo(s) menor(es) preço(s)`,
-    count('queda') && `${count('queda')} queda(s)`,
-    count('promocao') && `${count('promocao')} promoção(ões)`,
-    count('voltou') && `${count('voltou')} volta(s) ao estoque`,
-    count('aumento') && `${count('aumento')} aumento(s)`,
-  ].filter(Boolean);
-
-  await send(`🔔 ${parts.join(', ')}`, buildHtml(sections, 'Novidades nos seus produtos'));
+  let sent = 0;
+  const errors = [];
+  for (const u of users) {
+    const mine = watched.get(u.id);
+    const events = unique.filter((e) => mine?.has(e.product_id) && inRegion(e, u.region));
+    if (!events.length) continue;
+    const products = allProducts.filter((p) => events.some((e) => e.product_id === p.id));
+    const sections = (await withOffers(products, true, u.region)).map((s) => ({ ...s, events: events.filter((e) => e.product_id === s.product.id) }));
+    try {
+      await send(u.email, subjectFor(events), buildHtml(sections, 'Novidades nos seus produtos'));
+      sent += events.length;
+    } catch (err) {
+      errors.push(`${u.email}: ${err.message}`);
+    }
+  }
+  // Marca como enviadas mesmo se alguém falhou: reenviar repetiria o e-mail de quem já recebeu.
   await q('UPDATE events SET emailed = 1 WHERE id = ANY($1)', [pending.map((e) => e.id)]);
-  return unique.length;
+  if (errors.length) throw new Error(`Falha no envio para ${errors.join(' | ')}`);
+  return sent;
 }
 
-// HTML do e-mail de resumo, para conferir no navegador.
-export async function previewSummaryHtml() {
+// HTML do e-mail de resumo da pessoa, para conferir no navegador.
+export async function previewSummaryHtml(user) {
   const sections = [];
-  for (const s of await withOffers(await listProducts({ onlyActive: true }))) {
+  for (const s of await withOffers(await listProducts({ onlyActive: true, userId: user.id }), false, user.region)) {
     sections.push({ ...s, events: dedupeEvents(await q('SELECT * FROM events WHERE product_id = $1 ORDER BY id DESC LIMIT 15', [s.product.id])).slice(0, 5) });
   }
   return buildHtml(sections, 'Pré-visualização do e-mail');
 }
 
-// Resumo completo do ranking atual (botão "enviar resumo" / teste de configuração).
-export async function sendSummaryEmail() {
+// Resumo completo do ranking atual da pessoa (botão "enviar resumo" / teste de configuração).
+export async function sendSummaryEmail(user) {
   if (!emailConfigured()) throw new Error('E-mail não configurado: preencha SMTP_USER e SMTP_PASS (arquivo .env ou variáveis da Vercel)');
-  const sections = (await withOffers(await listProducts({ onlyActive: true }))).map((s) => ({ ...s, events: [] }));
-  await send('📊 Resumo do Radar de Preços', buildHtml(sections, 'Resumo dos seus produtos'));
+  const sections = (await withOffers(await listProducts({ onlyActive: true, userId: user.id }), false, user.region)).map((s) => ({ ...s, events: [] }));
+  await send(user.email, '📊 Resumo do Radar de Preços', buildHtml(sections, 'Resumo dos seus produtos'));
+}
+
+// Link de acesso (login ou convite).
+export async function sendLoginEmail(user, link, { invite = false, invitedBy = null, ttlText }) {
+  const title = invite ? 'Você foi convidado para o Radar de Preços' : 'Seu link de acesso';
+  const intro = invite
+    ? `${invitedBy ? `${esc(invitedBy)} convidou você` : 'Você foi convidado'} para acompanhar preços no Radar de Preços. Você escolhe os produtos e recebe um e-mail quando o preço cair, entrar em promoção ou voltar ao estoque.`
+    : 'Clique no botão para entrar no Radar de Preços. Se não foi você que pediu, ignore este e-mail.';
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f4f1;font-family:system-ui,-apple-system,'Segoe UI',sans-serif">
+  <div style="max-width:520px;margin:0 auto;padding:24px 16px">
+    <div style="font-size:13px;color:#52514e;letter-spacing:.04em;text-transform:uppercase;font-weight:600">Radar de Preços</div>
+    <div style="background:#fff;border-radius:12px;padding:24px;margin-top:12px;border:1px solid #e1e0d9">
+      <h1 style="margin:0 0 12px;font-size:20px;color:#0b0b0b">${esc(title)}</h1>
+      <p style="color:#52514e;font-size:15px;line-height:1.5;margin:0 0 20px">${intro}</p>
+      <a href="${esc(link)}" style="display:inline-block;background:#1c5cab;color:#fff;text-decoration:none;font-weight:600;padding:12px 20px;border-radius:8px">Entrar no Radar de Preços</a>
+      <p style="color:#898781;font-size:12px;margin:20px 0 0">O link vale por ${esc(ttlText)} e funciona uma vez. Depois disso, peça outro na tela de entrada.</p>
+    </div>
+  </div></body></html>`;
+  await send(user.email, invite ? '✉️ Convite para o Radar de Preços' : '🔑 Seu link de acesso ao Radar de Preços', html);
 }
