@@ -76,6 +76,23 @@ export const MARKETS = [
   { id: 'kabum', name: 'KaBuM!', kind: 'varejo', site: 'kabum.com.br', collect: createKabumSource('kabum') },
   { id: 'magalu', name: 'Magalu', kind: 'varejo', site: 'kabum.com.br (vendido pela Magalu)', collect: createKabumSource('magalu') },
   { id: 'samsung', name: 'Samsung', kind: 'varejo', site: 'shop.samsung.com/br', collect: retail('samsung', 'https://shop.samsung.com/br', 'Samsung') },
+  // Lojas próprias de marcas de eletro (VTEX, só o que a própria fabricante vende). Cada uma só tem
+  // a própria marca: para produtos de outras marcas a busca simplesmente não acha nada.
+  ...[
+    ['consul', 'Consul', 'https://www.consul.com.br'],
+    ['compracerta', 'Compra Certa', 'https://www.compracerta.com.br'], // loja da Whirlpool: Brastemp, Consul, KitchenAid
+    ['kitchenaid', 'KitchenAid', 'https://www.kitchenaid.com.br'],
+    ['oster', 'Oster', 'https://www.oster.com.br'],
+    ['arno', 'Arno', 'https://www.arno.com.br'],
+    ['philco', 'Philco', 'https://www.philco.com.br'],
+    ['britania', 'Britânia', 'https://www.britania.com.br'],
+    ['mondial', 'Mondial', 'https://www.mondial.com.br'],
+    ['cadence', 'Cadence', 'https://www.cadence.com.br'],
+    ['panasonic', 'Panasonic', 'https://loja.panasonic.com.br'],
+    ['midea', 'Midea', 'https://www.midea.com.br'],
+    ['polishop', 'Polishop', 'https://www.polishop.com.br'],
+    ['elgin', 'Elgin', 'https://www.elgin.com.br'],
+  ].map(([id, name, base]) => ({ id, name, kind: 'varejo', site: new URL(base).host, collect: retail(id, base, name) })),
   { id: 'americanas', name: 'Americanas', kind: 'varejo', site: 'americanas.com.br (Americanas e Magalu)', collect: americanas },
 ];
 
@@ -88,6 +105,8 @@ export const UNSUPPORTED = [
   { id: 'casasbahia', name: 'Casas Bahia, Ponto e Extra', reason: 'Bloqueiam acesso automatizado (HTTP 403).' },
   { id: 'terabyte', name: 'Terabyte', reason: 'Bloqueia acesso automatizado (desafio da Cloudflare).' },
   { id: 'pichau', name: 'Pichau', reason: 'Bloqueia acesso automatizado (desafio da Cloudflare).' },
+  { id: 'lg', name: 'LG', reason: 'O site carrega os produtos por JavaScript, sem interface de busca aberta. Produtos LG vêm do varejo.' },
+  { id: 'philips', name: 'Philips Walita', reason: 'O site não tem loja com busca aberta. Produtos Philips vêm do varejo.' },
 ];
 
 export const marketsFor = (product) => MARKETS.filter((m) => m.kind === 'mercado' || product.channels === 'todos');

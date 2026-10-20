@@ -111,6 +111,7 @@ Use **É este** para incluir um item, ou o **×** no ranking para excluir um que
 | Covabra | API VTEX + simulação de carrinho por CEP (região de Campinas e Indaiatuba) | Sim |
 | Assaí, Sumerbol | Não suportados: não vendem online, só publicam encartes em imagem | — |
 | **Varejo:** Brastemp, Electrolux, Fast Shop, Samsung | API VTEX, só o que a própria loja vende | Preço nacional do site |
+| **Varejo (lojas de marca):** Consul, Compra Certa (Whirlpool), KitchenAid, Oster, Arno, Philco, Britânia, Mondial, Cadence, Panasonic, Midea, Polishop, Elgin | API VTEX, só o que a própria fabricante vende. Cada loja só tem a própria marca | Preço nacional do site |
 | **Varejo:** KaBuM! | API de busca do KaBuM, só o que o próprio KaBuM vende | Preço nacional do site |
 | **Varejo:** Magalu | Ofertas vendidas e entregues pela Magalu dentro do KaBuM (mesmo grupo) e dentro da Americanas. O site magazineluiza.com.br bloqueia acesso automatizado | Preço nacional do site |
 | **Varejo:** Americanas | API VTEX + simulação de carrinho (a busca não traz preço), só a própria Americanas e a Magalu; demais parceiros ficam de fora. Preço "de" mais de 60% acima do atual é ignorado (inflado por vendedores) | Preço nacional do site |
@@ -118,7 +119,7 @@ Use **É este** para incluir um item, ou o **×** no ranking para excluir um que
 
 Por padrão, cada produto só é comparado em supermercados. Marketplaces (carrefour.com.br, lojas parceiras
 do Pão de Açúcar e do Tenda) ficam de fora de propósito. No formulário do produto, "Onde buscar" →
-"Supermercados + lojas de varejo" inclui também Brastemp, Electrolux, Fast Shop, Samsung, KaBuM, Magalu e Americanas
+"Supermercados + lojas de varejo" inclui também Brastemp, Electrolux, Fast Shop, Samsung, KaBuM, Magalu, Americanas e as lojas de marca acima
 (usado nas geladeiras, TV e eletroportáteis).
 
 Ao cadastrar um produto, o app já procura uma imagem dele nas lojas (a primeira que conferir com os termos).
