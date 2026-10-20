@@ -6,7 +6,7 @@ import { baseTitle, titleKey } from './queries.js';
 import { guessCategory } from './categories.js';
 
 const SIZE = /^\d+ [a-z]+$/; // "13 kg", "500 ml" (já juntos por chunks)
-const MAX_GROUPS = 30; // exatos (têm todas as palavras)
+const MAX_GROUPS = 60; // exatos (têm todas as palavras); a tela mostra aos poucos ("mostrar mais")
 const MAX_SIMILAR = 15; // parecidos (falta uma palavra)
 
 // Palavras que, antes da palavra buscada, indicam que o produto é outra coisa feita PARA ela:
@@ -23,100 +23,197 @@ const PARTS = new Set([
   'acessorio', 'acessorios', 'membrana', 'anel', 'prato', 'lampada', 'sensor', 'rolamento', 'amortecedor', 'trava',
   'retentor', 'correia', 'bomba', 'tripe', 'eixo', 'helice', 'faca', 'lamina', 'copo', 'batedor', 'engrenagem',
 ]);
+const isPart = (t) => t.trim().split(' ').slice(0, 2).some((w) => PARTS.has(w));
+
+// ---------- sinônimos e erros de digitação ----------
+
+// Cada linha: jeitos diferentes de escrever a mesma coisa (já normalizados).
+const SYNONYM_GROUPS = [
+  ['geladeira', 'refrigerador'],
+  ['tv', 'televisao', 'televisor'],
+  ['ar condicionado', 'split', 'condicionador de ar'],
+  ['air fryer', 'fritadeira eletrica', 'fritadeira sem oleo'],
+  ['lava e seca', 'lavadora e secadora', 'lava seca'],
+  ['maquina de lavar', 'lavadora', 'lava roupas'],
+  ['notebook', 'laptop'],
+  ['celular', 'smartphone'],
+  ['aspirador', 'aspirador de po'],
+  ['freezer', 'congelador'],
+  ['cafeteira', 'maquina de cafe'],
+  ['papel higienico', 'papel toalete'],
+];
+
+// Palavras conhecidas, para corrigir digitação de 1 letra ("geladera" -> "geladeira").
+const DICTIONARY = new Set([
+  ...SYNONYM_GROUPS.flat().flatMap((p) => p.split(' ')).filter((w) => w.length >= 4),
+  ...('geladeira fogao microondas liquidificador batedeira planetaria cafeteira aspirador ventilador televisao notebook celular ' +
+    'smartphone detergente amaciante sabao desinfetante sanitaria alvejante limpador multiuso esponja cafe arroz feijao acucar oleo ' +
+    'leite cerveja whisky vinho vodka lavadora secadora freezer purificador bebedouro fritadeira panela sofa colchao travesseiro ' +
+    'impressora monitor tablet fralda shampoo condicionador sabonete papel toalha lixeira talheres frigideira sanduicheira torradeira ' +
+    'chaleira espremedor processador mixer grill forno cooktop coifa depurador adega climatizador umidificador aquecedor ferro secador ' +
+    'chapinha barbeador inverter frost duplex branca branco preta preto inox prata cinza vermelha vermelho smart digital eletrica ' +
+    'samsung brastemp electrolux consul philco mondial britania oster arno panasonic midea philips walita motorola xiaomi apple iphone ' +
+    'galaxy kitchenaid cadence polishop elgin tramontina pilao nescafe macallan').split(' '),
+]);
+
+// Distância de edição com troca de letras vizinhas ("samsumg" -> "samsung" vale 1). Para em max+1.
+function distance(a, b, max = 1) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let rowMin = Infinity;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      rowMin = Math.min(rowMin, d[i][j]);
+    }
+    if (rowMin > max) return max + 1;
+  }
+  return d[a.length][b.length];
+}
+
+const closeTo = (w, candidate) => w.length >= 5 && w[0] === candidate[0] && distance(w, candidate) <= 1;
+
+/**
+ * Prepara o texto da pessoa: corrige palavras com 1 letra errada e lista buscas alternativas
+ * para as lojas (sinônimos, versão curta). Retorna { text, corrected, alternatives }.
+ */
+export function prepareQuery(raw) {
+  const words = normalize(raw).trim().split(' ').filter(Boolean);
+  let corrected = false;
+  const fixed = words.map((w) => {
+    if (w.length < 5 || DICTIONARY.has(w) || /\d/.test(w)) return w;
+    const hit = [...DICTIONARY].find((d) => closeTo(w, d));
+    if (hit) corrected = true;
+    return hit ?? w;
+  });
+  const text = corrected ? fixed.join(' ') : String(raw).trim();
+  const q = ` ${fixed.join(' ')} `;
+  const alternatives = new Set();
+  // Sinônimos: troca o termo pelo jeito mais comum de escrever ("refrigerador" -> "geladeira").
+  for (const group of SYNONYM_GROUPS) {
+    const found = group.find((p) => q.includes(` ${p} `));
+    if (found && found !== group[0]) alternatives.add(q.replace(` ${found} `, ` ${group[0]} `).trim());
+  }
+  // Versão curta para lojas que não acham nada com frase longa: código do modelo, ou as 2 primeiras palavras.
+  const code = modelCodes(raw)[0];
+  if (code) alternatives.add(code);
+  const plain = chunks(text).filter((c) => !SIZE.test(c));
+  if (plain.length > 2) alternatives.add(plain.slice(0, 2).join(' '));
+  alternatives.delete(normalize(text).trim());
+  return { text, corrected, alternatives: [...alternatives] };
+}
+
+// "Conceitos" do texto: cada palavra, ou um termo de várias palavras com os sinônimos dele.
+function concepts(text) {
+  let q = ` ${normalize(text).trim()} `;
+  const out = [];
+  for (const group of SYNONYM_GROUPS) {
+    const found = [...group].sort((a, b) => b.length - a.length).find((p) => q.includes(` ${p} `));
+    if (!found) continue;
+    out.push({ label: found, alts: group, first: q.indexOf(` ${found} `) });
+    q = q.replace(` ${found} `, ' ');
+  }
+  for (const c of chunks(q)) out.push({ label: c, alts: [c], first: q.indexOf(` ${c} `) });
+  return out.sort((a, b) => a.first - b.first);
+}
+
+// Posição do conceito no título (qualquer sinônimo; palavra com 1 letra errada também vale). -1 se não tem.
+function conceptAt(t, concept) {
+  for (const alt of concept.alts) {
+    const pos = wordAt(t, alt);
+    if (pos >= 0) return { pos, fuzzy: false };
+  }
+  if (concept.alts.length === 1 && !concept.label.includes(' ')) {
+    const tokens = t.trim().split(' ');
+    const i = tokens.findIndex((tok) => closeTo(concept.label, tok));
+    if (i >= 0) return { pos: i, fuzzy: true };
+  }
+  return { pos: -1, fuzzy: false };
+}
 
 /**
  * Relevância do título para o texto da pessoa.
- *   hits: palavras do texto presentes (junta ou separada vale igual: microondas = micro-ondas);
- *   score: +10 por palavra; a 1ª palavra buscada como 1ª do título vale +8 (é o tipo do produto:
- *          "Geladeira Electrolux…"), como 2ª vale +3 ("Smart TV…"); depois disso é peça ou alimento
- *          ("Placa Potência Geladeira", "Lasanha Airfryer");
- *          -12 se ela vem depois de "para/de/com…" (acessório ou alimento "para" aquilo).
+ *   score: +10 por palavra (+6 se só bateu com 1 letra diferente); a 1ª palavra buscada como 1ª do
+ *          título vale +8 (é o tipo do produto: "Geladeira Electrolux…"), como 2ª vale +3 ("Smart TV…");
+ *          -12 se ela vem depois de "para/de/com…" (acessório ou alimento "para" aquilo);
+ *          brinquedo/miniatura -15; título que começa com nome de peça -20.
  *   missing: palavras do texto que o título não tem.
  * brand: loja de marca única; a marca conta como presente mesmo se o título não a repete.
  */
-function relevance(words, text, title, brand = null) {
+function relevance(list, text, title, brand = null) {
   const t = normalize(title);
   const tokens = t.trim().split(' ');
   const query = normalize(text);
   const withBrand = brand ? `${t}${normalize(brand).trim()} ` : t;
-  let hits = 0;
   let score = 0;
   const missing = [];
-  words.forEach((w, idx) => {
-    const pos = wordAt(t, w);
+  list.forEach((c, idx) => {
+    const { pos, fuzzy } = conceptAt(t, c);
     if (pos < 0) {
-      if (wordAt(withBrand, w) >= 0) {
-        hits++;
-        score += 10;
-      } else missing.push(w);
+      if (conceptAt(withBrand, c).pos >= 0) score += 10;
+      else missing.push(c.label);
       return;
     }
-    hits++;
-    score += 10;
+    score += fuzzy ? 6 : 10;
     const prev = tokens[pos - 1];
     // "pão de queijo": o "de" faz parte do que a pessoa digitou, não é modificador.
-    if (MODIFIERS.has(prev) && !query.includes(` ${prev} ${w.split(' ')[0]}`)) score -= 12;
+    if (MODIFIERS.has(prev) && !query.includes(` ${prev} ${c.label.split(' ')[0]}`)) score -= 12;
     else if (idx === 0) score += pos === 0 ? 8 : pos === 1 ? 3 : 0;
   });
   for (const w of TOY) if (t.includes(` ${w} `) && !query.includes(` ${w} `)) score -= 15;
-  // Começa com nome de peça que a pessoa não digitou: vai para o fim.
   if (tokens.slice(0, 2).some((w) => PARTS.has(w) && !query.includes(` ${w} `))) score -= 20;
-  return { hits, score, missing };
+  return { score, missing };
 }
 
 // Palavra legível para "não tem: …" (a medida volta a ficar junta: "13 kg" -> "13kg").
-const label = (w) => w.replace(/^(d+) ([a-z]+)$/, '$1$2');
+const label = (w) => w.replace(/^(\d+) ([a-z]+)$/, '$1$2');
 
-/**
- * Junta os resultados das lojas em grupos (mesmo produto em várias lojas) para a tela de escolha.
- * Mesmo EAN ou mesmo título = mesmo grupo.
- * Só entram itens com todas as palavras do texto (missing = []) ou, como "parecidos", com uma a menos
- * (missing = ["samsung"]). Ordem: exatos antes, depois relevância, estoque e preço.
- */
-export function groupResults(text, items) {
-  const words = chunks(text);
-  const allowMissing = words.length >= 2 ? 1 : 0;
-  const groups = new Map();
-  const keyOf = new Map(); // "ean:..." ou "t:..." -> grupo (o mesmo produto pode ter vários EANs, ex.: 127V e 220V)
-  for (const it of items) {
-    if (!it.title) continue;
-    const { hits, score, missing } = relevance(words, text, it.title, it.brand);
-    if (missing.length > allowMissing) continue;
-    const ids = [`t:${titleKey(it.title)}`, ...(it.ean ? [`ean:${it.ean}`] : [])];
-    const key = ids.map((k) => keyOf.get(k)).find(Boolean) ?? ids[0];
-    for (const k of ids) keyOf.set(k, key);
-    if (!groups.has(key)) groups.set(key, { key, title: baseTitle(it.title), image: null, hits, score, missing, items: [] });
-    const g = groups.get(key);
-    g.hits = Math.max(g.hits, hits);
-    g.score = Math.max(g.score, score);
-    if (missing.length < g.missing.length) g.missing = missing;
-    g.image ??= it.image;
-    g.items.push(it);
-  }
-  const out = [...groups.values()].map((g) => {
-    const inStock = g.items.filter((i) => i.available && i.price);
-    const priced = (inStock.length ? inStock : g.items).filter((i) => i.price).sort((a, b) => a.price - b.price);
-    const markets = [...new Map(g.items.map((i) => [i.market, i.marketName])).values()];
-    return {
-      key: g.key,
-      title: g.title,
-      image: g.image,
-      hits: g.hits,
-      score: g.score,
-      missing: g.missing.map(label),
-      available: inStock.length > 0,
-      price: priced[0]?.price ?? null,
-      approximate: priced[0]?.approximate ?? false,
-      markets,
-      // O que o cadastro precisa de cada item escolhido.
-      items: g.items.map((i) => ({ market: i.market, kind: i.kind, extKey: i.extKey, ean: i.ean, title: i.title, image: i.image })),
-    };
-  });
-  // Exatos primeiro; depois mais relevante; o preço só desempata entre itens igualmente relevantes.
-  out.sort((a, b) => a.missing.length - b.missing.length || b.score - a.score || b.available - a.available || (a.price ?? Infinity) - (b.price ?? Infinity));
-  const exact = out.filter((g) => !g.missing.length).slice(0, MAX_GROUPS);
-  const similar = out.filter((g) => g.missing.length).slice(0, MAX_SIMILAR);
-  return [...exact, ...similar];
+// ---------- variações (cor e voltagem) e marca ----------
+
+const COLORS = [
+  ['Branca', ['branca', 'branco', 'white']],
+  ['Preta', ['preta', 'preto', 'black']],
+  ['Inox', ['inox']],
+  ['Prata', ['prata', 'silver']],
+  ['Cinza', ['cinza', 'grafite', 'titanium', 'titanio', 'chumbo']],
+  ['Vermelha', ['vermelha', 'vermelho', 'red']],
+  ['Azul', ['azul', 'blue']],
+  ['Rosa', ['rosa', 'pink']],
+  ['Verde', ['verde']],
+  ['Bege', ['bege', 'marfim', 'creme']],
+  ['Dourada', ['dourada', 'dourado', 'gold']],
+];
+export const COLOR_ALIASES = Object.fromEntries(COLORS);
+
+function colorOf(title) {
+  const t = normalize(title);
+  const found = COLORS.filter(([, aliases]) => aliases.some((a) => t.includes(` ${a} `))).map(([name]) => name);
+  if (found.includes('Preta') && found.includes('Inox')) return 'Black Inox';
+  return found[0] ?? null;
+}
+
+function voltageOf(title) {
+  const t = normalize(title);
+  if (t.includes(' bivolt ')) return 'Bivolt';
+  const low = / (110|127) v(?:olts?)? /.test(t);
+  const high = / 220 v(?:olts?)? /.test(t);
+  if (low && high) return null; // "110V/220V": não dá para saber
+  return low ? '127V' : high ? '220V' : null;
+}
+
+const KNOWN_BRANDS = [
+  'samsung', 'lg', 'brastemp', 'consul', 'electrolux', 'philco', 'mondial', 'britania', 'oster', 'arno', 'panasonic', 'midea',
+  'philips', 'walita', 'kitchenaid', 'cadence', 'elgin', 'tcl', 'sony', 'motorola', 'xiaomi', 'apple', 'multilaser', 'hisense',
+  'ype', 'omo', 'pilao', 'nescafe', 'tramontina', 'black decker', 'wap', 'gree', 'fischer', 'esmaltec', 'suggar', 'agratto',
+];
+function brandOf(item) {
+  if (item.brand) return item.brand;
+  const t = normalize(item.title);
+  const b = KNOWN_BRANDS.find((x) => t.includes(` ${x} `));
+  return b ? b.replace(/\b\w/g, (c) => c.toUpperCase()) : null;
 }
 
 // Códigos de modelo no título: letras e números juntos (WD13FG, BRO85AK, OBAT641, 60UA85),
@@ -126,6 +223,95 @@ function modelCodes(title) {
     .split(/[\s\-/(),.+]+/)
     .filter((t) => t.length >= 4 && /[a-z]/i.test(t) && /\d/.test(t) && !/^\d+[a-z]+$/i.test(t))
     .map((t) => t.toLowerCase());
+}
+
+// Tira as palavras de cor do título (cartão que junta várias cores).
+function withoutColors(title) {
+  const words = COLORS.flatMap(([, a]) => a);
+  return title
+    .split(/\s+/)
+    .filter((w) => !words.includes(normalize(w).trim()))
+    .join(' ')
+    .replace(/\s+-\s*$/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Junta os resultados das lojas em grupos para a tela de escolha. O mesmo aparelho vira um cartão:
+ * mesmo EAN, mesmo título ou mesmo código do modelo (WD13FG da Samsung, da Fast Shop e da Americanas,
+ * em qualquer cor ou voltagem). Peças nunca entram no grupo do aparelho pelo código.
+ * Só entram itens com todas as palavras do texto (missing = []) ou, como "parecidos", com uma a menos.
+ * Cada grupo traz as variações (cores e voltagens) e a marca, para os botões e o filtro da tela.
+ */
+export function groupResults(text, items) {
+  const list = concepts(text);
+  const allowMissing = list.length >= 2 ? 1 : 0;
+  const groups = new Map();
+  const keyOf = new Map(); // "ean:...", "t:..." ou "m:código" -> grupo
+  const codeIndex = []; // [código, grupo] para juntar por começo comum (wd13fg = wd13fg6b34be)
+  for (const it of items) {
+    if (!it.title) continue;
+    const { score, missing } = relevance(list, text, it.title, it.brand);
+    if (missing.length > allowMissing) continue;
+    const part = isPart(normalize(it.title));
+    const codes = part ? [] : modelCodes(it.title);
+    const ids = [`t:${titleKey(it.title)}`, ...(it.ean ? [`ean:${it.ean}`] : []), ...codes.map((c) => `m:${c}`)];
+    let key = ids.map((k) => keyOf.get(k)).find(Boolean);
+    if (!key) {
+      for (const c of codes) {
+        const hit = codeIndex.find(([k]) => Math.min(k.length, c.length) >= 5 && (k.startsWith(c) || c.startsWith(k)));
+        if (hit) {
+          key = hit[1];
+          break;
+        }
+      }
+    }
+    key ??= ids[0];
+    for (const k of ids) keyOf.set(k, key);
+    for (const c of codes) codeIndex.push([c, key]);
+    if (!groups.has(key)) groups.set(key, { key, title: it.title, score, missing, codes: new Set(), items: [] });
+    const g = groups.get(key);
+    if (score > g.score) {
+      g.score = score;
+      g.title = it.title;
+    }
+    if (missing.length < g.missing.length) g.missing = missing;
+    for (const c of codes) g.codes.add(c);
+    g.items.push({ ...it, color: colorOf(it.title), voltage: voltageOf(it.title), brand: brandOf(it) });
+  }
+  const out = [...groups.values()].map((g) => {
+    const inStock = g.items.filter((i) => i.available && i.price);
+    const priced = (inStock.length ? inStock : g.items).filter((i) => i.price).sort((a, b) => a.price - b.price);
+    const markets = [...new Map(g.items.map((i) => [i.market, i.marketName])).values()];
+    const colors = [...new Set(g.items.map((i) => i.color).filter(Boolean))];
+    const volts = [...new Set(g.items.map((i) => i.voltage).filter((v) => v && v !== 'Bivolt'))].sort();
+    const codes = [...g.codes].sort((a, b) => a.length - b.length);
+    return {
+      key: g.key,
+      title: colors.length > 1 ? withoutColors(baseTitle(g.title)) : baseTitle(g.title),
+      image: (inStock.find((i) => i.image) ?? g.items.find((i) => i.image))?.image ?? null,
+      score: g.score,
+      missing: g.missing.map(label),
+      available: inStock.length > 0,
+      price: priced[0]?.price ?? null,
+      approximate: priced[0]?.approximate ?? false,
+      markets,
+      brand: g.items.map((i) => i.brand).find(Boolean) ?? null,
+      model: codes[0]?.toUpperCase() ?? null,
+      variants: { colors, volts },
+      // O que o cadastro precisa de cada item escolhido.
+      items: g.items.map((i) => ({
+        market: i.market, kind: i.kind, extKey: i.extKey, ean: i.ean, title: i.title, image: i.image,
+        color: i.color, voltage: i.voltage, available: !!i.available,
+      })),
+    };
+  });
+  // Exatos primeiro; depois mais relevante; o preço só desempata entre itens igualmente relevantes.
+  out.sort((a, b) => a.missing.length - b.missing.length || b.score - a.score || b.available - a.available || (a.price ?? Infinity) - (b.price ?? Infinity));
+  const exact = out.filter((g) => !g.missing.length).slice(0, MAX_GROUPS);
+  const similar = out.filter((g) => g.missing.length).slice(0, MAX_SIMILAR);
+  return [...exact, ...similar];
 }
 
 // Código comum a todos os títulos escolhidos; senão o maior começo comum (ex.: wd13fg e wd13fg6b34 -> wd13fg).
@@ -153,8 +339,10 @@ const parseBRL = (v) => {
  * Monta o produto a partir do texto e dos itens escolhidos (pode ser nenhum:
  * "acompanhar mesmo assim"). others: títulos que apareceram na busca e não foram escolhidos
  * (servem para achar a palavra que diferencia, ex.: o sabor "maçã" entre vários detergentes).
+ * variants: { colors, volts } quando a pessoa escolheu só algumas cores/voltagens do modelo
+ * (vira termo obrigatório, para outras lojas também respeitarem a escolha).
  */
-export function buildProduct(text, chosen = [], { maxPrice = null, others = [] } = {}) {
+export function buildProduct(text, chosen = [], { maxPrice = null, others = [], variants = null } = {}) {
   const query = String(text ?? '').trim().replace(/\s+/g, ' ').slice(0, 120);
   if (!query) throw new Error('Escreva o que você quer acompanhar');
   const titles = chosen.map((c) => c.title);
@@ -165,7 +353,8 @@ export function buildProduct(text, chosen = [], { maxPrice = null, others = [] }
   if (titles.length) {
     code = commonModelCode(titles);
     // Medidas que todos os escolhidos têm (13 kg, 500 ml) + palavras do texto que estão em todos.
-    const sizes = chunks(titles[0]).filter((c) => SIZE.test(c) && inAll(c));
+    // (voltagem não é medida: "127 v" fica de fora; ela só entra se a pessoa escolher uma voltagem.)
+    const sizes = chunks(titles[0]).filter((c) => SIZE.test(c) && !/ v$/.test(c) && inAll(c));
     const fromText = chunks(query).filter(inAll);
     include = [...new Set([code, ...sizes, ...fromText].filter(Boolean))];
     // Nada em comum com o texto (ex.: escolheu algo bem diferente): usa as primeiras palavras do título.
@@ -184,6 +373,12 @@ export function buildProduct(text, chosen = [], { maxPrice = null, others = [] }
       pool.splice(pool.indexOf(best.c), 1);
       rivals = rivals.filter((t) => normalize(t).includes(` ${best.c} `));
     }
+    // Só algumas cores ou só uma voltagem: vira termo (uma das cores escolhidas; a voltagem).
+    if (variants?.colors?.length) {
+      const aliases = variants.colors.flatMap((c) => (c === 'Black Inox' ? ['black inox'] : COLOR_ALIASES[c] ?? [normalize(c).trim()]));
+      include.push([...new Set(aliases)].join('|'));
+    }
+    if (variants?.volts?.length === 1) include.push(variants.volts[0].toLowerCase());
   } else {
     include = chunks(query);
   }

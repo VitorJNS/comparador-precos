@@ -82,6 +82,17 @@ parecidos (outros sabores, outras cores), a palavra que separa o escolhido (ex.:
 Os itens escolhidos e os códigos de barras deles ficam aceitos direto. Logo depois de salvar, o
 produto é buscado em todas as lojas (cerca de 30 s), sem esperar a próxima coleta.
 
+Na lista de escolha:
+- os resultados aparecem conforme cada loja responde ("18 de 27 lojas…"); dá para escolher antes de terminar;
+- só entra o que tem tudo o que foi digitado; com uma palavra a menos vai para "Parecidos" ("não tem: samsung");
+- erro de 1 letra é corrigido ("geladera" → geladeira) e sinônimos valem ("refrigerador" = geladeira, "split" = ar-condicionado);
+- se uma loja acha pouco com a frase inteira, o app tenta sozinho uma versão curta (código do modelo, 2 primeiras palavras);
+- o mesmo aparelho de várias lojas vira um cartão (mesmo código do modelo, EAN ou título), com botões de **cor** e
+  **voltagem**: desmarcar uma cor ou voltagem vale também para as outras lojas;
+- filtro por marca, ordem (mais parecidos / menor preço) e "mostrar mais";
+- antes de salvar, um resumo diz o que vai ser acompanhado (cor, voltagem, onde, aviso).
+Se outra pessoa já acompanha o mesmo item (mesmas regras e mesmo preço máximo), o produto é compartilhado em vez de duplicado.
+
 Termos de várias palavras conferem em qualquer ordem: `lava e seca samsung 13kg` aceita
 "Lava e Seca 13 Kg Samsung". Quantidade e unidade ficam juntas (`13 kg` não confunde com `13 programas`).
 

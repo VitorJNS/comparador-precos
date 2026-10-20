@@ -1022,7 +1022,13 @@ form.addEventListener('submit', async (e) => {
 
 const findDlg = $('#findDialog');
 const findForm = $('#findForm');
-const find = { step: 1, text: '', groups: [], selected: new Set(), searching: false };
+const PAGE = 12; // cartões por vez na lista ("mostrar mais")
+const find = {
+  step: 1, text: '', groups: [], selected: new Set(), searching: false,
+  progress: null, corrected: null,
+  sel: {}, // cores/voltagens escolhidas por cartão: { [key]: { colors: Set, volts: Set } }
+  brand: 'todas', sort: 'relevancia', limit: PAGE,
+};
 
 function findStep(step) {
   find.step = step;
@@ -1033,11 +1039,11 @@ function findStep(step) {
   const next = $('#findNext');
   next.textContent = step === 1 ? 'Procurar nas lojas' : step === 2 ? 'Continuar' : 'Começar a acompanhar';
   next.disabled = step === 2 && !find.selected.size;
-  next.hidden = step === 2 && !find.groups.length && !find.searching;
+  next.hidden = step === 2 && !find.groups.length;
 }
 
 function openFind() {
-  find.groups = [];
+  Object.assign(find, { groups: [], sel: {}, brand: 'todas', sort: 'relevancia', limit: PAGE, progress: null, corrected: null });
   find.selected.clear();
   findForm.reset();
   findForm.querySelector('.find-limit').hidden = true;
@@ -1047,20 +1053,56 @@ function openFind() {
 }
 
 const chosenGroups = () => find.groups.filter((g) => find.selected.has(g.key));
+const listJoin = (a) => (a.length > 1 ? `${a.slice(0, -1).join(', ')} e ${a.at(-1)}` : a[0] ?? '');
+
+// Cores/voltagens escolhidas no cartão (começa com todas).
+function variantSel(g) {
+  find.sel[g.key] ??= { colors: new Set(g.variants?.colors ?? []), volts: new Set(g.variants?.volts ?? []) };
+  return find.sel[g.key];
+}
+
+function variantChips(g) {
+  const v = g.variants ?? { colors: [], volts: [] };
+  const s = variantSel(g);
+  const row = (kind, values, chosen, title) =>
+    values.length > 1
+      ? `<span class="find-chips" role="group" aria-label="${title}"><span class="find-chips-label">${title}:</span>${values
+          .map((x) => `<button type="button" class="find-chip${chosen.has(x) ? ' on' : ''}" data-var="${kind}" data-val="${esc(x)}" aria-pressed="${chosen.has(x)}">${esc(x)}</button>`)
+          .join('')}</span>`
+      : '';
+  return row('colors', v.colors, s.colors, 'Cor') + row('volts', v.volts, s.volts, 'Voltagem');
+}
 
 function findItem(g) {
   const on = find.selected.has(g.key);
   const where = g.markets.length > 2 ? `${g.markets.slice(0, 2).join(', ')} e mais ${g.markets.length - 2}` : g.markets.join(' e ');
-  return `<button type="button" class="find-item${on ? ' on' : ''}" data-pick="${esc(g.key)}" aria-pressed="${on}">
+  return `<div class="find-item${on ? ' on' : ''}" data-pick="${esc(g.key)}" role="checkbox" aria-checked="${on}" tabindex="0">
     ${thumb(g.image, true)}
     <span class="find-item-text">
       <span class="find-item-title">${esc(g.title)}</span>
-      <span class="find-item-where">${esc(where)}</span>
-      <span class="find-item-price">${g.price ? `${g.approximate ? 'cerca de ' : ''}${brl(g.price)}` : ''}${g.available ? '' : ' <span class="find-out">sem estoque agora</span>'}</span>
+      <span class="find-item-where">${esc(where)}${g.markets.length > 1 ? ` · em ${g.markets.length} lojas` : ''}</span>
+      <span class="find-item-price">${g.price ? `${g.approximate || g.markets.length > 1 ? 'a partir de ' : ''}${brl(g.price)}` : ''}${g.available ? '' : ' <span class="find-out">sem estoque agora</span>'}</span>
       ${g.missing?.length ? `<span class="find-missing">não tem: ${g.missing.map((w) => `“${esc(w)}”`).join(', ')}</span>` : ''}
+      ${variantChips(g)}
     </span>
     <span class="find-check" aria-hidden="true">${ICON.check}</span>
-  </button>`;
+  </div>`;
+}
+
+// Filtro por marca e ordem, só nos exatos (os parecidos ficam como estão).
+function filtered(list) {
+  const byBrand = find.brand === 'todas' ? list : list.filter((g) => g.brand === find.brand);
+  return find.sort === 'preco' ? [...byBrand].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity)) : byBrand;
+}
+
+function filterBar(exact) {
+  const brands = [...exact.reduce((m, g) => (g.brand ? m.set(g.brand, (m.get(g.brand) ?? 0) + 1) : m), new Map())].sort((a, b) => b[1] - a[1]);
+  if (exact.length < 6 && brands.length < 2) return '';
+  const chip = (val, text, on, kind) => `<button type="button" class="find-chip${on ? ' on' : ''}" data-filter="${kind}" data-val="${esc(val)}" aria-pressed="${on}">${esc(text)}</button>`;
+  return `<div class="find-filters">
+    ${brands.length > 1 ? `<span class="find-chips" role="group" aria-label="Marca"><span class="find-chips-label">Marca:</span>${chip('todas', 'Todas', find.brand === 'todas', 'brand')}${brands.slice(0, 8).map(([b, n]) => chip(b, `${b} (${n})`, find.brand === b, 'brand')).join('')}</span>` : ''}
+    <span class="find-chips" role="group" aria-label="Ordem"><span class="find-chips-label">Ordem:</span>${chip('relevancia', 'Mais parecidos', find.sort === 'relevancia', 'sort')}${chip('preco', 'Menor preço', find.sort === 'preco', 'sort')}</span>
+  </div>`;
 }
 
 // Lista principal: só o que tem tudo o que a pessoa digitou. "Parecidos": falta uma palavra
@@ -1068,50 +1110,156 @@ function findItem(g) {
 function renderFindResults() {
   const exact = find.groups.filter((g) => !g.missing?.length);
   const similar = find.groups.filter((g) => g.missing?.length);
-  const inStock = exact.filter((g) => g.available);
-  const out = exact.filter((g) => !g.available);
+  const shown = filtered(exact);
+  const inStock = shown.filter((g) => g.available);
+  const out = shown.filter((g) => !g.available);
+  const page = inStock.slice(0, find.limit);
+  const p = find.progress;
   $('#findLead').textContent = exact.length
     ? 'Toque no produto que você quer. Pode escolher mais de um, se for o mesmo produto em lojas diferentes.'
-    : similar.length
-      ? `Não achamos exatamente "${find.text}". Veja os parecidos abaixo, ou escreva de outro jeito.`
-      : `Não encontramos "${find.text}" nas lojas agora.`;
+    : find.searching
+      ? `Procurando "${find.text}" nas lojas…`
+      : similar.length
+        ? `Não achamos exatamente "${find.text}". Veja os parecidos abaixo, ou escreva de outro jeito.`
+        : `Não encontramos "${find.text}" nas lojas agora.`;
   $('#findResults').innerHTML =
-    (inStock.length ? `<div class="find-list">${inStock.map(findItem).join('')}</div>` : '') +
+    (find.corrected ? `<p class="find-hint find-corrected">Procurando por <strong>“${esc(find.corrected)}”</strong> (corrigimos a digitação).</p>` : '') +
+    (find.searching
+      ? `<div class="find-loading find-loading-inline"><span class="spinner" aria-hidden="true"></span>${p ? `${p.done} de ${p.total} lojas responderam…` : 'Procurando nas lojas…'}</div>`
+      : '') +
+    filterBar(exact) +
+    (page.length ? `<div class="find-list">${page.map(findItem).join('')}</div>` : '') +
+    (inStock.length > page.length ? `<button type="button" class="btn btn-secondary btn-lg find-show-more" id="findMore">Mostrar mais (${inStock.length - page.length})</button>` : '') +
     (out.length
       ? `<details class="find-more"${inStock.length ? '' : ' open'}><summary>Também encontramos, mas sem estoque agora (${out.length})</summary>
           <p class="find-hint">Se escolher um destes, avisamos por e-mail quando voltar ao estoque.</p>
-          <div class="find-list">${out.map(findItem).join('')}</div></details>`
+          <div class="find-list">${out.slice(0, 20).map(findItem).join('')}</div></details>`
       : '') +
     (similar.length
-      ? `<details class="find-more find-similar"${exact.length ? '' : ' open'}><summary>Parecidos, mas sem tudo o que você escreveu (${similar.length})</summary>
+      ? `<details class="find-more find-similar"${exact.length || find.searching ? '' : ' open'}><summary>Parecidos, mas sem tudo o que você escreveu (${similar.length})</summary>
           <p class="find-hint">Cada um mostra a palavra que falta. Confira antes de escolher.</p>
           <div class="find-list">${similar.map(findItem).join('')}</div></details>`
       : '') +
-    `<div class="find-none">
-      <p class="find-hint">${find.groups.length ? 'Não é nenhum destes?' : 'Confira se o nome está certo e tente de novo, ou:'}</p>
-      <button type="button" class="btn btn-secondary btn-lg" id="findAnyway">Acompanhar "${esc(find.text)}" mesmo assim</button>
-    </div>`;
-  $('#findAnyway').onclick = () => { find.selected.clear(); renderSummary(); findStep(3); };
-  findStep(2);
+    (find.searching
+      ? ''
+      : `<div class="find-none">
+          <p class="find-hint">${find.groups.length ? 'Não é nenhum destes?' : 'Confira se o nome está certo e tente de novo, ou:'}</p>
+          <button type="button" class="btn btn-secondary btn-lg" id="findAnyway">Acompanhar "${esc(find.text)}" mesmo assim</button>
+        </div>`);
+  const anyway = $('#findAnyway');
+  if (anyway) anyway.onclick = () => { find.selected.clear(); renderSummary(); findStep(3); };
+  const more = $('#findMore');
+  if (more) more.onclick = () => { find.limit += PAGE; renderFindResults(); };
+  if (find.step !== 2) findStep(2);
+  else {
+    $('#findNext').hidden = !find.groups.length;
+    $('#findNext').disabled = !find.selected.size;
+  }
+}
+
+function toggleCard(card) {
+  const key = card.dataset.pick;
+  find.selected.has(key) ? find.selected.delete(key) : find.selected.add(key);
+  card.classList.toggle('on', find.selected.has(key));
+  card.setAttribute('aria-checked', find.selected.has(key));
+  $('#findNext').disabled = !find.selected.size;
 }
 
 $('#findResults').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-pick]');
-  if (!b) return;
-  const key = b.dataset.pick;
-  find.selected.has(key) ? find.selected.delete(key) : find.selected.add(key);
-  b.classList.toggle('on', find.selected.has(key));
-  b.setAttribute('aria-pressed', find.selected.has(key));
-  $('#findNext').disabled = !find.selected.size;
+  const filter = e.target.closest('[data-filter]');
+  if (filter) {
+    find[filter.dataset.filter === 'brand' ? 'brand' : 'sort'] = filter.dataset.val;
+    find.limit = PAGE;
+    return renderFindResults();
+  }
+  const chip = e.target.closest('[data-var]');
+  if (chip) {
+    // Botão de cor/voltagem: liga/desliga (sempre fica pelo menos um) e já marca o cartão.
+    const card = chip.closest('[data-pick]');
+    const g = find.groups.find((x) => x.key === card.dataset.pick);
+    const set = variantSel(g)[chip.dataset.var];
+    const val = chip.dataset.val;
+    if (set.has(val) && set.size > 1) set.delete(val);
+    else set.add(val);
+    card.querySelectorAll(`[data-var="${chip.dataset.var}"]`).forEach((b) => {
+      b.classList.toggle('on', set.has(b.dataset.val));
+      b.setAttribute('aria-pressed', set.has(b.dataset.val));
+    });
+    if (!find.selected.has(g.key)) toggleCard(card);
+    return;
+  }
+  const card = e.target.closest('[data-pick]');
+  if (card) toggleCard(card);
+});
+$('#findResults').addEventListener('keydown', (e) => {
+  const card = e.target.closest('[data-pick]');
+  if (card && e.target === card && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    toggleCard(card);
+  }
 });
 
+// Itens do cartão que respeitam as cores/voltagens escolhidas.
+function chosenItems(g) {
+  const s = variantSel(g);
+  const v = g.variants ?? { colors: [], volts: [] };
+  const allColors = s.colors.size >= v.colors.length;
+  const allVolts = s.volts.size >= v.volts.length;
+  return g.items.filter(
+    (i) => (allColors || (i.color && s.colors.has(i.color))) && (allVolts || !i.voltage || i.voltage === 'Bivolt' || s.volts.has(i.voltage)),
+  );
+}
+
+// Cores/voltagens restritas (vão como termo obrigatório, para as outras lojas também respeitarem).
+function chosenVariants(groups) {
+  const colors = new Set();
+  const volts = new Set();
+  let restrictColors = false;
+  let restrictVolts = false;
+  for (const g of groups) {
+    const s = variantSel(g);
+    const v = g.variants ?? { colors: [], volts: [] };
+    if (v.colors.length > 1 && s.colors.size < v.colors.length) restrictColors = true;
+    if (v.volts.length > 1 && s.volts.size < v.volts.length) restrictVolts = true;
+    s.colors.forEach((c) => colors.add(c));
+    s.volts.forEach((x) => volts.add(x));
+  }
+  return { colors: restrictColors ? [...colors] : [], volts: restrictVolts ? [...volts] : [] };
+}
+
+// Passo 3: frase simples com o que vai ser acompanhado.
 function renderSummary() {
   const g = chosenGroups();
-  const anyInStock = g.some((x) => x.available);
-  $('#findSummary').innerHTML = g.length
-    ? `<div class="find-chosen">${thumb(g[0].image)}<div><div class="find-item-title">${esc(g[0].title)}</div>
-        <div class="find-hint">${g.length > 1 ? `e mais ${g.length - 1} parecido${g.length > 2 ? 's' : ''} · ` : ''}${anyInStock ? 'vamos comparar o preço em todas as lojas' : 'sem estoque agora: avisamos quando voltar'}</div></div></div>`
-    : `<div class="find-chosen"><div><div class="find-item-title">${esc(find.text)}</div><div class="find-hint">Vamos procurar nas lojas a cada 6 horas e avisar quando aparecer.</div></div></div>`;
+  if (!g.length) {
+    $('#findSummary').innerHTML = `<div class="find-chosen"><div><div class="find-item-title">${esc(find.text)}</div>
+      <div class="find-hint">Vamos procurar nas lojas a cada 6 horas e avisar quando aparecer.</div></div></div>`;
+    return;
+  }
+  const v = chosenVariants(g);
+  const items = g.flatMap(chosenItems);
+  const markets = [...new Set(g.flatMap((x) => x.markets))];
+  const inStock = items.some((i) => i.available);
+  const hasColors = g.some((x) => (x.variants?.colors.length ?? 0) > 1);
+  const hasVolts = g.some((x) => (x.variants?.volts.length ?? 0) > 1);
+  const model = g.find((x) => x.model)?.model;
+  const lines = [
+    hasColors ? `<li><strong>Cor:</strong> ${v.colors.length ? esc(listJoin(v.colors)) : 'qualquer uma'}</li>` : '',
+    hasVolts ? `<li><strong>Voltagem:</strong> ${v.volts.length ? esc(listJoin(v.volts)) : 'qualquer uma'}</li>` : '',
+    `<li><strong>Onde:</strong> ${esc(listJoin(markets))}${model ? ` e em qualquer outra loja que vender o modelo <strong>${esc(model)}</strong>` : ''}</li>`,
+    `<li><strong>Agora:</strong> ${inStock ? 'tem estoque; vamos comparar o preço em todas as lojas' : 'sem estoque; avisamos por e-mail quando voltar'}</li>`,
+  ].join('');
+  $('#findSummary').innerHTML = `<div class="find-chosen">${thumb(g[0].image)}<div style="min-width:0">
+      <div class="find-hint">Vamos acompanhar:</div>
+      <div class="find-item-title">${esc(g[0].title)}${g.length > 1 ? ` <span class="find-hint">e mais ${g.length - 1}</span>` : ''}</div>
+      <ul class="find-summary">${lines}<li id="findAvisoLine"></li></ul></div></div>`;
+  updateAvisoLine();
+}
+
+function updateAvisoLine() {
+  const li = $('#findAvisoLine');
+  if (!li) return;
+  const limit = findForm.aviso.value === 'limite' ? findForm.maxPrice.value.trim() : '';
+  li.innerHTML = `<strong>Aviso:</strong> ${limit ? `quando ficar abaixo de R$ ${esc(limit)}` : findForm.aviso.value === 'limite' ? 'quando ficar abaixo do preço que você escrever' : 'sempre que o preço cair'}`;
 }
 
 findForm.addEventListener('change', (e) => {
@@ -1120,7 +1268,36 @@ findForm.addEventListener('change', (e) => {
     limit.hidden = e.target.value !== 'limite';
     if (!limit.hidden) findForm.maxPrice.focus();
   }
+  updateAvisoLine();
 });
+findForm.addEventListener('input', (e) => { if (e.target.name === 'maxPrice') updateAvisoLine(); });
+
+// Busca com resultados aos poucos (uma linha JSON por atualização). Sem suporte, recebe tudo de uma vez.
+async function streamSearch(text, onUpdate) {
+  const res = await fetch('/api/buscar?stream=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texto: text }) });
+  if (res.status === 401) {
+    findDlg.close();
+    showLogin();
+    throw new Error('Faça login para continuar');
+  }
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erro ${res.status}`);
+  if (!(res.headers.get('content-type') ?? '').includes('ndjson') || !res.body) return onUpdate({ ...(await res.json()), final: true });
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (line) onUpdate(JSON.parse(line));
+    }
+  }
+  if (buf.trim()) onUpdate(JSON.parse(buf));
+}
 
 findForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1131,25 +1308,29 @@ findForm.addEventListener('submit', async (e) => {
       $('#findError').textContent = 'Escreva o nome do produto.';
       return;
     }
-    find.text = text;
+    Object.assign(find, { text, groups: [], sel: {}, brand: 'todas', sort: 'relevancia', limit: PAGE, progress: null, corrected: null, searching: true });
     find.selected.clear();
-    find.searching = true;
     $('#findLead').textContent = '';
-    $('#findResults').innerHTML = `<div class="find-loading"><span class="spinner" aria-hidden="true"></span>Procurando "${esc(text)}" nas lojas… leva alguns segundos.</div>`;
-    find.groups = [];
+    $('#findResults').innerHTML = `<div class="find-loading"><span class="spinner" aria-hidden="true"></span>Procurando "${esc(text)}" nas lojas…</div>`;
     findStep(2);
     next.hidden = true;
     try {
-      const r = await api('buscar', { method: 'POST', body: { texto: text } });
-      find.groups = r.groups;
+      await streamSearch(text, (u) => {
+        // Mantém o que a pessoa já marcou; só troca a lista.
+        find.groups = u.groups ?? [];
+        find.corrected = u.corrigido ?? null;
+        find.progress = { done: u.done, total: u.total };
+        if (u.final) find.searching = false;
+        renderFindResults();
+      });
     } catch (err) {
+      find.searching = false;
       $('#findResults').innerHTML = '';
       findStep(1);
       $('#findError').textContent = err.message;
       return;
-    } finally {
-      find.searching = false;
     }
+    find.searching = false;
     renderFindResults();
     return;
   }
@@ -1172,8 +1353,9 @@ findForm.addEventListener('submit', async (e) => {
       method: 'POST',
       body: {
         texto: find.text,
-        items: chosen.flatMap((g) => g.items),
+        items: chosen.flatMap(chosenItems),
         others: find.groups.filter((g) => !find.selected.has(g.key)).map((g) => g.title),
+        variants: chosenVariants(chosen),
         maxPrice: limit || null,
       },
     });
@@ -1181,6 +1363,7 @@ findForm.addEventListener('submit', async (e) => {
     state.overview = null;
     location.hash = `#/produto/${r.id}`;
     if (r.existing) toast('Este produto já está na sua lista');
+    else if (r.shared) toast('Outra pessoa já acompanhava este produto: ele entrou na sua lista, com o histórico de preços');
     else if (r.collecting) watchFirstSearch(r.id);
   } catch (err) {
     $('#findError').textContent = err.message;

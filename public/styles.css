@@ -606,3 +606,17 @@ details.stores ul { margin: 6px 0 0; padding-left: 14px; font-size: 12px; color:
 .find-missing { font-size: 13px; font-weight: 600; color: var(--warn-text, #b35c00); }
 :root[data-theme="dark"] .find-missing { color: #ffb05c; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .find-missing { color: #ffb05c; } }
+
+/* Cadastro: botões de cor/voltagem, filtros, "mostrar mais" e resumo. */
+.find-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.find-chips-label { font-size: 13px; color: var(--text-2); font-weight: 600; margin-right: 2px; }
+.find-chip { min-height: 34px; padding: 0 12px; border-radius: 999px; border: 2px solid var(--border-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.find-chip.on { border-color: var(--accent); background: var(--accent-soft); }
+.find-chip:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.find-filters { display: grid; gap: 4px; margin: 4px 0 10px; }
+.find-show-more { width: 100%; margin: 4px 0 8px; }
+.find-loading-inline { padding: 8px 4px; font-size: 15px; }
+.find-corrected { margin-bottom: 6px; }
+.find-summary { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 15px; line-height: 1.4; }
+.find-item[role="checkbox"] { cursor: pointer; }
+@media (pointer: coarse) { .find-chip { min-height: 44px; padding: 0 14px; } }

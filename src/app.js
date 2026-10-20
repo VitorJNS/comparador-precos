@@ -13,7 +13,7 @@ import {
 } from './db.js';
 import { collectProductNow, getProgress, runCollection, runMarketSlice, startRun } from './collector.js';
 import { MARKETS, UNSUPPORTED, findProductImage, previewAll } from './markets/index.js';
-import { buildProduct, groupResults } from './finder.js';
+import { buildProduct, groupResults, prepareQuery } from './finder.js';
 import { CATEGORIES, guessCategory, isCategory } from './categories.js';
 import { emailConfigured, panelUrl, previewSummaryHtml, sendLoginEmail, sendSummaryEmail } from './notifier.js';
 import { INVITE_TTL_DAYS, LOGIN_TTL_MIN, clearCookie, consumeLoginToken, createLoginToken, currentUser, sessionCookie } from './auth.js';
@@ -400,11 +400,33 @@ export async function handleApi(req, res, url) {
   }
 
   // ----- cadastro simplificado: procurar nas lojas e escolher pela foto -----
+  // Com ?stream=1 a resposta vem aos poucos (uma linha JSON por atualização), para a tela mostrar
+  // o que já chegou enquanto as lojas mais lentas respondem.
   if (method === 'POST' && parts[1] === 'buscar') {
-    const text = String((await readBody(req)).texto ?? '').trim().slice(0, 120);
-    if (text.length < 2) return send(res, 400, { error: 'Escreva o nome do produto' });
-    const { items, failed } = await previewAll(text, { regions: loadSettings().regioes });
-    return send(res, 200, { groups: groupResults(text, items), failed });
+    const raw = String((await readBody(req)).texto ?? '').trim().slice(0, 120);
+    if (raw.length < 2) return send(res, 400, { error: 'Escreva o nome do produto' });
+    const { text, corrected, alternatives } = prepareQuery(raw);
+    const ctx = { regions: loadSettings().regioes };
+    const meta = { texto: text, corrigido: corrected ? text : null };
+    if (url.searchParams.get('stream') !== '1') {
+      const { items, failed } = await previewAll(text, ctx, { alternatives });
+      return send(res, 200, { ...meta, groups: groupResults(text, items), failed });
+    }
+    res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+    let last = 0;
+    const push = (items, done, total, final = false) => {
+      if (!final && Date.now() - last < 700) return; // no máximo ~1,5 atualização por segundo
+      last = Date.now();
+      res.write(`${JSON.stringify({ ...meta, done, total, final, groups: groupResults(text, items) })}
+`);
+    };
+    const { items, failed } = await previewAll(text, ctx, {
+      alternatives,
+      onProgress: ({ items, done, total }) => push(items, done, total),
+    });
+    res.end(`${JSON.stringify({ ...meta, done: 1, total: 1, final: true, failed, groups: groupResults(text, items) })}
+`);
+    return;
   }
 
   if (parts[1] === 'products') {
@@ -416,11 +438,25 @@ export async function handleApi(req, res, url) {
         ean: i.ean ? String(i.ean) : null, title: String(i.title ?? ''), image: i.image ? String(i.image) : null,
       })).filter((i) => i.extKey && i.title);
       const others = (Array.isArray(body.others) ? body.others : []).slice(0, 60).map(String);
-      const { product, image } = buildProduct(body.texto, chosen, { maxPrice: body.maxPrice, others });
+      const pick = (v) => (Array.isArray(v) ? v.slice(0, 12).map(String) : []);
+      const variants = body.variants ? { colors: pick(body.variants.colors), volts: pick(body.variants.volts) } : null;
+      // O texto vai corrigido (ex.: "samsumg" -> "samsung"), para a busca nas lojas funcionar.
+      const { product, image } = buildProduct(prepareQuery(String(body.texto ?? '')).text, chosen, { maxPrice: body.maxPrice, others, variants });
       // Já está na lista da pessoa (mesmo item escolhido antes)? Abre o que existe.
       const mine = await listProducts({ userId: me.id });
       const dup = product.accepted.length && mine.find((p) => p.accepted.some((k) => product.accepted.includes(k)));
       if (dup) return send(res, 200, { id: dup.id, existing: true });
+      // Outra pessoa já acompanha o mesmo item, com as mesmas regras e o mesmo preço máximo:
+      // entra na lista dela também (a coleta é uma só e o histórico de preços já vem pronto).
+      const same = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+      const shared = product.accepted.length && (await listProducts()).find(
+        (p) => (p.maxPrice ?? null) === (product.maxPrice ?? null) && same(p.include, product.include) &&
+          product.accepted.filter((k) => p.accepted.includes(k)).length * 2 >= product.accepted.length,
+      );
+      if (shared) {
+        await linkProduct(me.id, shared.id);
+        return send(res, 200, { id: shared.id, shared: true });
+      }
       const newId = await saveProduct(product);
       await linkProduct(me.id, newId);
       if (image) await setProductImage(newId, image);

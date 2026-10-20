@@ -118,22 +118,32 @@ export const marketsFor = (product) => MARKETS.filter((m) => m.kind === 'mercado
 
 // Tela de cadastro: busca o texto em todas as lojas, em paralelo. Lojas que não respondem
 // a tempo ficam de fora (a lista mostra o que chegou). Retorna { items, failed }.
-export async function previewAll(text, ctx, { timeoutMs = 20000 } = {}) {
+export async function previewAll(text, ctx, { timeoutMs = 12000, alternatives = [], onProgress = null } = {}) {
   const items = [];
   const failed = [];
+  const sources = MARKETS.filter((m) => m.collect.preview);
+  let done = 0;
   await Promise.all(
-    MARKETS.filter((m) => m.collect.preview).map(async (m) => {
+    sources.map(async (m) => {
       let timer;
+      const deadline = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error('demorou demais')), timeoutMs)));
       try {
-        const found = await Promise.race([
-          m.collect.preview(text, ctx),
-          new Promise((_, reject) => (timer = setTimeout(() => reject(new Error('demorou demais')), timeoutMs))),
-        ]);
+        let found = await Promise.race([m.collect.preview(text, ctx), deadline]);
+        // Poucos resultados (frase longa demais, outro jeito de escrever): tenta as alternativas
+        // (sinônimo, código do modelo, versão curta) e junta, sem repetir item.
+        for (const alt of alternatives) {
+          if (found.length >= 3) break;
+          const more = await Promise.race([m.collect.preview(alt, ctx), deadline]).catch(() => []);
+          const seen = new Set(found.map((x) => x.extKey));
+          found = [...found, ...more.filter((x) => !seen.has(x.extKey))];
+        }
         for (const it of found) items.push({ ...it, market: m.id, marketName: m.name, kind: m.kind });
       } catch {
         failed.push(m.name);
       } finally {
         clearTimeout(timer);
+        done++;
+        onProgress?.({ items, done, total: sources.length });
       }
     }),
   );

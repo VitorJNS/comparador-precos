@@ -228,6 +228,7 @@ export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase,
           brand,
         price: best.price,
         available: inStock.length > 0,
+        approximate: true, // preço do cartão; o do Pix vem na busca logo depois de salvar
       }];
     });
   }
