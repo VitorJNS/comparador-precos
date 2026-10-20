@@ -1057,23 +1057,35 @@ function findItem(g) {
       <span class="find-item-title">${esc(g.title)}</span>
       <span class="find-item-where">${esc(where)}</span>
       <span class="find-item-price">${g.price ? `${g.approximate ? 'cerca de ' : ''}${brl(g.price)}` : ''}${g.available ? '' : ' <span class="find-out">sem estoque agora</span>'}</span>
+      ${g.missing?.length ? `<span class="find-missing">não tem: ${g.missing.map((w) => `“${esc(w)}”`).join(', ')}</span>` : ''}
     </span>
     <span class="find-check" aria-hidden="true">${ICON.check}</span>
   </button>`;
 }
 
+// Lista principal: só o que tem tudo o que a pessoa digitou. "Parecidos": falta uma palavra
+// (fica recolhido, a não ser que nada bata exatamente).
 function renderFindResults() {
-  const inStock = find.groups.filter((g) => g.available);
-  const out = find.groups.filter((g) => !g.available);
-  $('#findLead').textContent = find.groups.length
+  const exact = find.groups.filter((g) => !g.missing?.length);
+  const similar = find.groups.filter((g) => g.missing?.length);
+  const inStock = exact.filter((g) => g.available);
+  const out = exact.filter((g) => !g.available);
+  $('#findLead').textContent = exact.length
     ? 'Toque no produto que você quer. Pode escolher mais de um, se for o mesmo produto em lojas diferentes.'
-    : `Não encontramos "${find.text}" nas lojas agora.`;
+    : similar.length
+      ? `Não achamos exatamente "${find.text}". Veja os parecidos abaixo, ou escreva de outro jeito.`
+      : `Não encontramos "${find.text}" nas lojas agora.`;
   $('#findResults').innerHTML =
     (inStock.length ? `<div class="find-list">${inStock.map(findItem).join('')}</div>` : '') +
     (out.length
       ? `<details class="find-more"${inStock.length ? '' : ' open'}><summary>Também encontramos, mas sem estoque agora (${out.length})</summary>
           <p class="find-hint">Se escolher um destes, avisamos por e-mail quando voltar ao estoque.</p>
           <div class="find-list">${out.map(findItem).join('')}</div></details>`
+      : '') +
+    (similar.length
+      ? `<details class="find-more find-similar"${exact.length ? '' : ' open'}><summary>Parecidos, mas sem tudo o que você escreveu (${similar.length})</summary>
+          <p class="find-hint">Cada um mostra a palavra que falta. Confira antes de escolher.</p>
+          <div class="find-list">${similar.map(findItem).join('')}</div></details>`
       : '') +
     `<div class="find-none">
       <p class="find-hint">${find.groups.length ? 'Não é nenhum destes?' : 'Confira se o nome está certo e tente de novo, ou:'}</p>

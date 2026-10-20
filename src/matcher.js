@@ -9,17 +9,29 @@
 // Termo de várias palavras vale em qualquer ordem: "lava e seca samsung 13kg" confere com
 // "Lava e Seca 13 Kg Samsung". Quantidade + unidade ("13 kg", "500 ml") fica junta.
 
+// Unidade depois de um número, numa escrita só: "410 litros" = "410L" = "410 lt" -> "410 l".
+const UNIT_ALIAS = {
+  litro: 'l', litros: 'l', lt: 'l', lts: 'l', ltr: 'l',
+  quilo: 'kg', quilos: 'kg', kgs: 'kg', quilograma: 'kg', quilogramas: 'kg',
+  grama: 'g', gramas: 'g', gr: 'g', grs: 'g',
+  mililitro: 'ml', mililitros: 'ml',
+  polegada: 'polegadas',
+};
+
 export function normalize(text) {
-  return ` ${String(text ?? '')
+  const base = String(text ?? '')
     // Tamanho de tela: 60", 60'', 60” e "60 pol" viram "60 polegadas" (e não se confundem com 60Hz).
     .replace(/(\d{2,3}(?:[.,]\d)?)\s*(?:"|''|”|″|pol\b\.?|polegadas?\b)/gi, ' $1 polegadas ')
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/(\d)([a-z])/g, '$1 $2') // "12anos" -> "12 anos", "700ml" -> "700 ml"
     .replace(/([a-z])(\d)/g, '$1 $2')
     .replace(/[^a-z0-9]+/g, ' ')
-    .trim()} `;
+    .trim()
+    .split(' ');
+  for (let i = 1; i < base.length; i++) if (/^\d+$/.test(base[i - 1]) && UNIT_ALIAS[base[i]]) base[i] = UNIT_ALIAS[base[i]];
+  return ` ${base.join(' ')} `;
 }
 
 // Palavras que não ajudam a identificar o produto.

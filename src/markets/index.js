@@ -46,8 +46,9 @@ const covabra = createVtexSource({
 
 // Varejo (lojas de eletro). Só entra em produtos marcados com "também em varejo";
 // vale só o que a própria loja vende, sem parceiros de marketplace. Preço nacional.
-const retail = (key, base, name) =>
-  createVtexSource({ key, catalogBase: base, storefront: base, regional: false, ownSellerOnly: true, storeLabel: () => `${name} (site)` });
+// brand: a loja só vende essa marca (a marca conta como presente nos títulos dela).
+const retail = (key, base, name, brand = null) =>
+  createVtexSource({ key, catalogBase: base, storefront: base, regional: false, ownSellerOnly: true, storeLabel: () => `${name} (site)`, brand });
 
 // Americanas (VTEX): a busca não traz preço; simula o carrinho só para a própria Americanas e para a
 // Magalu, que vende e entrega dentro da Americanas (o site da Magalu bloqueia acesso automatizado).
@@ -70,12 +71,12 @@ export const MARKETS = [
   { id: 'sams', name: "Sam's Club", kind: 'mercado', site: 'samsclub.com.br', collect: sams },
   { id: 'tenda', name: 'Tenda Atacado', kind: 'mercado', site: 'tendaatacado.com.br', collect: collectTenda },
   { id: 'covabra', name: 'Covabra', kind: 'mercado', site: 'covabra.com.br', collect: covabra },
-  { id: 'brastemp', name: 'Brastemp', kind: 'varejo', site: 'brastemp.com.br', collect: retail('brastemp', 'https://www.brastemp.com.br', 'Brastemp') },
-  { id: 'electrolux', name: 'Electrolux', kind: 'varejo', site: 'loja.electrolux.com.br', collect: retail('electrolux', 'https://loja.electrolux.com.br', 'Electrolux') },
+  { id: 'brastemp', name: 'Brastemp', kind: 'varejo', site: 'brastemp.com.br', collect: retail('brastemp', 'https://www.brastemp.com.br', 'Brastemp', 'Brastemp') },
+  { id: 'electrolux', name: 'Electrolux', kind: 'varejo', site: 'loja.electrolux.com.br', collect: retail('electrolux', 'https://loja.electrolux.com.br', 'Electrolux', 'Electrolux') },
   { id: 'fastshop', name: 'Fast Shop', kind: 'varejo', site: 'site.fastshop.com.br', collect: retail('fastshop', 'https://site.fastshop.com.br', 'Fast Shop') },
   { id: 'kabum', name: 'KaBuM!', kind: 'varejo', site: 'kabum.com.br', collect: createKabumSource('kabum') },
   { id: 'magalu', name: 'Magalu', kind: 'varejo', site: 'kabum.com.br (vendido pela Magalu)', collect: createKabumSource('magalu') },
-  { id: 'samsung', name: 'Samsung', kind: 'varejo', site: 'shop.samsung.com/br', collect: retail('samsung', 'https://shop.samsung.com/br', 'Samsung') },
+  { id: 'samsung', name: 'Samsung', kind: 'varejo', site: 'shop.samsung.com/br', collect: retail('samsung', 'https://shop.samsung.com/br', 'Samsung', 'Samsung') },
   // Lojas próprias de marcas de eletro (VTEX, só o que a própria fabricante vende). Cada uma só tem
   // a própria marca: para produtos de outras marcas a busca simplesmente não acha nada.
   ...[
@@ -92,7 +93,11 @@ export const MARKETS = [
     ['midea', 'Midea', 'https://www.midea.com.br'],
     ['polishop', 'Polishop', 'https://www.polishop.com.br'],
     ['elgin', 'Elgin', 'https://www.elgin.com.br'],
-  ].map(([id, name, base]) => ({ id, name, kind: 'varejo', site: new URL(base).host, collect: retail(id, base, name) })),
+  ].map(([id, name, base]) => ({
+    id, name, kind: 'varejo', site: new URL(base).host,
+    // Compra Certa (várias marcas da Whirlpool) e Polishop (várias marcas) não são de marca única.
+    collect: retail(id, base, name, ['compracerta', 'polishop'].includes(id) ? null : name),
+  })),
   { id: 'americanas', name: 'Americanas', kind: 'varejo', site: 'americanas.com.br (Americanas e Magalu)', collect: americanas },
 ];
 

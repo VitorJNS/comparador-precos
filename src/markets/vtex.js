@@ -67,7 +67,10 @@ function searchPix(o) {
 // ownSellerOnly: aceita só o vendedor "1" (a própria loja), ignorando parceiros de marketplace.
 // fixedSellers: { cep, sellers: { sellerId: rótulo } } para lojas em que a busca não traz preço
 // (ex.: Americanas): simula o carrinho num CEP só, apenas para os vendedores listados. Preço nacional.
-export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase, storefront, regional, storeLabel, ownSellerOnly = false, fixedSellers = null }) {
+// brand: loja de uma marca só (Samsung, Consul, Oster…). Muitas não repetem a marca no título
+// ("Lava e Seca Smart Digital Inverter WD13T"): para conferir os termos, a marca conta como presente.
+export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase, storefront, regional, storeLabel, ownSellerOnly = false, fixedSellers = null, brand = null }) {
+  const withBrand = (title) => (brand && !normalize(title).includes(` ${normalize(brand).trim()} `) ? `${title} ${brand}` : title);
   let sellerCache = null; // { at, sellers: Map<sellerId, { name, regions:Set, cep }> }
 
   async function search(query) {
@@ -127,7 +130,7 @@ export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase,
         for (const item of p.items ?? []) {
           const title = itemTitle(p, item);
           const image = item.images?.[0]?.imageUrl;
-          if (image && evaluate(product, { title, ean: item.ean || null, key: `${key}:${item.itemId}` }).match) return image;
+          if (image && evaluate(product, { title: withBrand(title), ean: item.ean || null, key: `${key}:${item.itemId}` }).match) return image;
         }
       }
     }
@@ -187,6 +190,7 @@ export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase,
           image: item.images?.[0]?.imageUrl ?? null,
           ean: item.ean || null,
           extKey: `${key}:${item.itemId}`,
+          brand,
           price: best ? searchPix(best) ?? (best.Price || best.ListPrice) : null,
           available: inStock.length > 0,
           approximate: regional,
@@ -221,6 +225,7 @@ export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase,
         image: item.images?.[0]?.imageUrl ?? null,
         ean: item.ean || null,
         extKey: `${key}:${item.itemId}`,
+          brand,
         price: best.price,
         available: inStock.length > 0,
       }];
@@ -249,7 +254,7 @@ export function createVtexSource({ key, catalogBase, checkoutBase = catalogBase,
           extKey,
           searchSellers: item.sellers ?? [],
         };
-        const verdict = evaluate(product, { title, ean: info.ean, key: extKey });
+        const verdict = evaluate(product, { title: withBrand(title), ean: info.ean, key: extKey });
         if (verdict.match) matched.set(item.itemId, info);
         else {
           const offer = info.searchSellers[0]?.commertialOffer;
